@@ -47,10 +47,12 @@ func (c *client) send(m proto.ServerMsg) {
 }
 
 type window struct {
-	name   string
-	root   *node
-	active *node
-	l      *layout // geometry from the last frame; mouse and resize read it
+	name       string
+	customName bool // true once the user has manually renamed via the rename keybind
+	root       *node
+	active     *node
+	l          *layout // geometry from the last frame; mouse and resize read it
+	zoomed     bool    // active pane fills the window, hiding the rest of the tree
 }
 
 // server owns every pane, tree and mode flag. All of it is touched from the
@@ -75,9 +77,10 @@ type server struct {
 	prefixSpec keySpec
 	lockSpec   keySpec
 
-	theme  theme   // current colorscheme, used for all chrome rendering
-	themes []theme // colorschemes offered by the picker
-	picker *picker // open colorscheme picker, nil when closed
+	theme   theme    // current colorscheme, used for all chrome rendering
+	themes  []theme  // colorschemes offered by the picker
+	picker  *picker  // open colorscheme picker, nil when closed
+	renamer *renamer // open window-rename prompt, nil when closed
 
 	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
 }
@@ -255,28 +258,44 @@ func (s *server) activePane() *pane {
 	return w.active.pane
 }
 
-// frame lays the window out, syncs pane sizes to it, and renders.
+// frame lays the window out, syncs pane sizes to it, and renders. Zoomed,
+// the active pane is resized and drawn to fill the whole body instead of its
+// tree rect; every other pane keeps its normal size, unresized and hidden,
+// so unzooming needs no restore step.
 func (s *server) frame() proto.ServerMsg {
 	w := s.win()
 	l := computeLayout(w.root, s.body())
 	w.l = l
+	bd := s.body()
 	for _, leaf := range l.leaves {
 		r := l.rects[leaf]
-		leaf.pane.resize(r.w, r.h)
+		if w.zoomed && leaf == w.active {
+			r = bd
+		}
+		cr := contentRect(r)
+		leaf.pane.resize(cr.w, cr.h)
 	}
-	body := render(w.root, l)
+	var body string
+	activeRect, hasActive := l.rects[w.active]
+	if w.zoomed && w.active != nil && w.active.pane != nil {
+		body = borderPane(w.active.pane, bd, true, s.theme)
+		activeRect, hasActive = bd, true
+	} else {
+		body = render(w.root, l, w.active, s.theme)
+	}
 	switch {
 	case s.picker != nil:
-		bd := s.body()
 		body = overlayCenter(body, bd.w, bd.h, pickerBox(themeNames(s.themes), s.picker.sel, s.theme))
+	case s.renamer != nil:
+		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.theme))
 	case s.prefix:
-		bd := s.body()
 		body = overlay(body, bd.w, bd.h, helpBox(s.km, s.theme))
 	}
 	m := proto.ServerMsg{Type: proto.MsgFrame, Content: s.tabBar() + "\n" + body + "\n" + s.statusBar()}
-	if r, ok := l.rects[w.active]; ok && w.active.pane != nil {
+	if hasActive && w.active.pane != nil {
 		c := w.active.pane.emu.CursorPosition()
-		m.CurX, m.CurY, m.CurVis = r.x+c.X, r.y+c.Y, w.active.pane.curVis
+		cr := contentRect(activeRect)
+		m.CurX, m.CurY, m.CurVis = cr.x+c.X, cr.y+c.Y, w.active.pane.curVis
 	}
 	return m
 }
@@ -297,6 +316,9 @@ func (s *server) statusBar() string {
 	if w := s.win(); w.active != nil {
 		if p := w.active.stackAncestor(); p != nil {
 			right += fmt.Sprintf("layer %d/%d  ", p.activeLayer()+1, len(p.children))
+		}
+		if w.zoomed {
+			right += "zoom  "
 		}
 	}
 	right += fmt.Sprintf("window %d/%d ", s.cur+1, len(s.windows))

@@ -19,7 +19,7 @@ func tabLine(windows []*window, cur, w int, th theme) (string, []tabHit) {
 	col := 0
 	for i, win := range windows {
 		name := win.name
-		if win.active != nil && win.active.pane != nil {
+		if !win.customName && win.active != nil && win.active.pane != nil {
 			name = win.active.pane.title
 		}
 		label := fmt.Sprintf(" %d:%s ", i, name)

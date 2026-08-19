@@ -11,9 +11,10 @@ import (
 
 // keymap lists every key yatm binds. Prefix and Lock take a "mod+key" spec
 // (e.g. "ctrl+b", "f12"); every other action is the single character typed
-// right after the prefix. Arrow-key navigation/resize, the 0-9 window
-// selectors, and pressing the prefix twice to send it through are structural
-// and not remapped here.
+// right after the prefix. Arrow-key navigation/resize, cycling a stacked
+// pane's layers at an arrow's dead end, the 0-9 window selectors, and
+// pressing the prefix twice to send it through are structural and not
+// remapped here.
 type keymap struct {
 	Prefix     string `yaml:"prefix"` // enters command mode
 	Lock       string `yaml:"lock"`   // toggles lock mode, prefix or not
@@ -25,10 +26,11 @@ type keymap struct {
 	SplitHoriz string `yaml:"split_horiz"` // side by side
 	SplitVert  string `yaml:"split_vert"`  // top to bottom
 	Stack      string `yaml:"stack"`       // layer a new pane behind the active one
-	CycleLayer string `yaml:"cycle_layer"` // switch which stacked layer shows
+	Zoom       string `yaml:"zoom"`        // grow the active pane to fill the window
 	KillPane   string `yaml:"kill_pane"`
 	KillWindow string `yaml:"kill_window"`
-	Theme      string `yaml:"theme"` // opens the colorscheme picker
+	Rename     string `yaml:"rename"` // renames the current window
+	Theme      string `yaml:"theme"`  // opens the colorscheme picker
 	Detach     string `yaml:"detach"`
 	Quit       string `yaml:"quit"`
 }
@@ -44,9 +46,10 @@ var defaultKeymap = keymap{
 	SplitHoriz: "%",
 	SplitVert:  `"`,
 	Stack:      "s",
-	CycleLayer: "z",
+	Zoom:       "z",
 	KillPane:   "x",
 	KillWindow: "&",
+	Rename:     ",",
 	Theme:      "T",
 	Detach:     "d",
 	Quit:       "q",

@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
+	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
@@ -20,11 +22,15 @@ type pane struct {
 	emu     *vt.Emulator
 	ptmx    *os.File
 	cmd     *exec.Cmd
-	title   string
+	title   string // the shell/program's own name — drives the window tab
 	curVis  bool
 	mouseOn bool // the program inside asked for mouse reporting
 	scroll  int  // lines scrolled back from live output; 0 = following live
 	w, h    int
+
+	cmdBuf   []rune // the line typed so far, tracked until the first Enter names the pane
+	cmdNamed bool   // the one-time auto-rename from the first command has already happened
+	autoName string // set once cmdNamed, from the first command; the pane's own border name
 
 	wideCols int       // widest column count snapshotted since full recovery; 0 = none held
 	wideRows []uv.Line // rows captured at wideCols, for restoring what a width shrink truncated
@@ -97,6 +103,56 @@ func (p *pane) setMouse(m ansi.Mode, on bool) {
 	}
 }
 
+// borderTitle returns what the pane's own border/header should show: the
+// first command it ran, once there's been one, otherwise whatever its
+// shell calls itself. Kept separate from title (which drives the window
+// tab) so an auto-rename shows up on the pane but never leaks into the tab.
+func (p *pane) borderTitle() string {
+	if p.cmdNamed {
+		return p.autoName
+	}
+	return p.title
+}
+
+// maxAutoTitleLen keeps an auto-derived pane title short enough to fit the
+// border without dominating it.
+const maxAutoTitleLen = 24
+
+// trackCommand watches keystrokes on their way to the shell to auto-name
+// the pane after the first command line it runs, tmux-style, truncated if
+// it's too long. It stops watching once that's happened, so later commands
+// don't keep renaming the pane, and gives up on the in-progress line for
+// anything it doesn't recognize as plain typing (arrows, tab-completion,
+// Ctrl+key combos, …) rather than risk naming the pane after a fragment.
+func (p *pane) trackCommand(k tea.Key) {
+	if p.cmdNamed {
+		return
+	}
+	switch {
+	case k.Text != "" && k.Mod == 0:
+		p.cmdBuf = append(p.cmdBuf, []rune(k.Text)...)
+	case k.Code == tea.KeyBackspace:
+		if n := len(p.cmdBuf); n > 0 {
+			p.cmdBuf = p.cmdBuf[:n-1]
+		}
+	case k.Code == tea.KeyEnter, k.Code == tea.KeyReturn:
+		if cmd := strings.TrimSpace(string(p.cmdBuf)); cmd != "" {
+			p.autoName, p.cmdNamed = truncateTitle(cmd), true
+		}
+		p.cmdBuf = p.cmdBuf[:0]
+	default:
+		p.cmdBuf = p.cmdBuf[:0]
+	}
+}
+
+func truncateTitle(s string) string {
+	r := []rune(s)
+	if len(r) <= maxAutoTitleLen {
+		return s
+	}
+	return string(r[:maxAutoTitleLen-1]) + "…"
+}
+
 // scrollBy moves the scrollback viewport by delta lines (positive = back in
 // history, negative = toward live output), clamped to what's available.
 // A no-op in alternate-screen mode, which has no scrollback.
@@ -165,11 +221,25 @@ func (p *pane) resize(w, h int) {
 // keeps the buffer's first h rows and silently drops the rest — since
 // output grows downward, that throws away the most recent lines (and the
 // cursor) while leaving stale old ones on screen, and growing back later
-// can't recover what was dropped. This pushes the true old rows into
-// scrollback and shifts the recent, cursor-bearing rows up to take their
-// place, so a split can be shrunk and regrown without eating its content.
+// can't recover what was dropped. This pushes the rows above the cursor's
+// new position into scrollback and shifts the recent, cursor-bearing rows
+// up to take their place, so a split can be shrunk and regrown without
+// eating its content.
+//
+// drop is measured from the cursor, not from p.h - h: a pane grown taller
+// than its content (zoom grows a pane far past what it has ever output)
+// has the cursor well above row p.h-1, and dropping p.h-h rows off the top
+// would discard the real content while keeping the blank padding below it.
+// Capped at p.h-h, the most shrinking by that much can structurally drop.
 func (p *pane) shrinkHeight(h int) {
-	drop := p.h - h
+	c := p.emu.CursorPosition()
+	drop := c.Y - (h - 1)
+	if drop < 0 {
+		drop = 0
+	}
+	if max := p.h - h; drop > max {
+		drop = max
+	}
 	sb := p.emu.Scrollback()
 	for y := range drop {
 		line := uv.NewLine(p.w)
@@ -187,7 +257,6 @@ func (p *pane) shrinkHeight(h int) {
 			p.emu.SetCell(x, y, p.emu.CellAt(x, y+drop))
 		}
 	}
-	c := p.emu.CursorPosition()
 	cy := c.Y - drop
 	if cy < 0 {
 		cy = 0

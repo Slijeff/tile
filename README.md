@@ -25,10 +25,13 @@ The prefix is **Ctrl+B**. Press it, then:
 | `c` / `n` / `p` / `0`–`9` | new window / next / previous / select by number |
 | `a` | new pane, auto-splitting whichever axis has more room |
 | `%` / `"` | split side-by-side / split top-to-bottom |
-| `s` / `z` | stack a pane behind the active one / switch which layer shows |
+| `s` | stack a pane behind the active one |
+| `z` | zoom the active pane to fill the window, or restore it |
 | `o` / arrows | cycle panes / move to the pane in that direction |
+| arrows, at a dead end in a stack | switch which stacked layer shows |
 | `Ctrl+arrow` / `Alt+arrow` | resize the active pane by 1 / by 5 |
 | `x` / `&` | kill the pane / kill the window |
+| `,` | rename the current window |
 | `T` | open the colorscheme picker |
 | `d` | detach, leaving everything running |
 | `q` | quit and stop the daemon |
@@ -45,16 +48,45 @@ working. F12 is the only key yatm never forwards.
 Every key above (except arrows, digits and the Ctrl+B passthrough, which are
 structural) is remappable — see [Keybinds](#keybinds).
 
-### Stacked panes
+### Panes, stacking, and borders
+
+Every pane is drawn in its own titled border, the title taken from the
+shell's own title (or whatever program is running) — the same name shown in
+the window tab. The active pane's border is highlighted in the theme's
+accent color; every other pane's is dimmed. The first command you run in a
+pane renames it to that command line — truncated with `…` if it's too long
+— overriding whatever the shell called it, and later commands leave that
+name alone.
 
 A **split** (`%` / `"`) divides the screen; both panes stay visible side by
 side. A **stack** (`s`) does not divide anything — the new pane shares the
 exact same rect as the one it was stacked behind, like a new layer in an
-image editor. Only one layer is visible (and running full-speed rendering)
-at a time; `z` cycles to the next one. Closing a layer (`x`) falls back to
-the one below it. The status bar shows `layer 2/3` whenever the active
-pane is part of a stack, so it's clear how many layers there are and which
-one you're looking at.
+image editor. Only one layer runs full-speed rendering at a time, but every
+other layer still leaves a one-row title bar on screen, stacked above or
+below the active layer in the order it was added — zellij's compact stacked
+look. Click a layer's title bar, or press an arrow key that has nowhere
+spatial to go (a stack has no side-by-side neighbours), to bring it to the
+front. Closing a layer (`x`) falls back to the one below it. The status bar
+shows `layer 2/3` whenever the active pane is part of a stack, so it's clear
+how many layers there are and which one you're looking at.
+
+### Zoom
+
+`z` grows the active pane to fill the entire window, hiding every other
+pane without closing or resizing them. You can still switch focus while
+zoomed — `o`, the arrows, clicking a tab — and whichever pane becomes
+active fills the screen in its place. Pressing `z` again restores the
+original layout, focused on whichever pane was active when you unzoomed.
+The status bar shows `zoom` while it's on.
+
+### Renaming windows
+
+A window's tab normally follows its active pane's shell title (or whatever
+program it's running). `,` opens a rename prompt over the layout, seeded
+with the current label; type a new one and `Enter` confirms it, `Esc`
+cancels. Once renamed, the tab keeps that name regardless of what runs in
+the pane, until you rename it again with a blank name, which reverts to
+following the pane title.
 
 ## Colorschemes
 
@@ -86,9 +118,10 @@ new_pane: a
 split_horiz: "%"
 split_vert: "\""
 stack: s
-cycle_layer: z
+zoom: z
 kill_pane: x
 kill_window: "&"
+rename: ","
 theme: T
 detach: d
 quit: q

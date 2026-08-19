@@ -71,11 +71,19 @@ type sep struct {
 	r      rect
 }
 
+// header is a collapsed (non-active) stack layer's one-row title bar —
+// all that shows of it until a click or cycleLayer brings it forward.
+type header struct {
+	node *node
+	r    rect
+}
+
 // layout is one geometry pass over a window's tree.
 type layout struct {
-	rects  map[*node]rect
-	leaves []*node // in tree order
-	seps   []sep
+	rects   map[*node]rect
+	leaves  []*node // in tree order; only the active layer of each stack
+	seps    []sep
+	headers []header
 }
 
 // sizes splits avail cells between weighted siblings. Leftover cells from the
@@ -116,7 +124,7 @@ func (l *layout) walk(n *node, r rect) {
 		return
 	}
 	if n.dir == dirStack {
-		l.walk(n.children[n.activeLayer()], r)
+		l.walkStack(n, r)
 		return
 	}
 	ws := make([]float64, len(n.children))
@@ -149,6 +157,49 @@ func (l *layout) walk(n *node, r rect) {
 	}
 }
 
+// stackRows splits a stack's children into the ones that collapse to a
+// header row above the active layer and the ones below it, trimming the
+// oldest header first when there isn't room for all of them plus at least
+// one row for the active layer's own content.
+func stackRows(n *node, h int) (before, after []*node) {
+	active := n.activeLayer()
+	before, after = n.children[:active], n.children[active+1:]
+	for len(before)+len(after)+1 > h {
+		switch {
+		case len(after) > 0:
+			after = after[:len(after)-1]
+		case len(before) > 0:
+			before = before[1:]
+		default:
+			return
+		}
+	}
+	return
+}
+
+// walkStack lays a stack's geometry out zellij-style: every layer but the
+// active one collapses to a single header row, in the order it sits in
+// n.children, and the active layer gets everything left over. Its rect
+// still lands in l.rects/l.leaves via the ordinary l.walk, so resizing,
+// spatial neighbour search and cycling a dead-end arrow all keep treating
+// a stack as a single pane; the header rows are purely a rendering and
+// click-target concern, recorded separately in l.headers.
+func (l *layout) walkStack(n *node, r rect) {
+	before, after := stackRows(n, r.h)
+	y := r.y
+	for _, c := range before {
+		l.headers = append(l.headers, header{c, rect{r.x, y, r.w, 1}})
+		y++
+	}
+	ah := r.h - len(before) - len(after)
+	l.walk(n.children[n.activeLayer()], rect{r.x, y, r.w, ah})
+	y += ah
+	for _, c := range after {
+		l.headers = append(l.headers, header{c, rect{r.x, y, r.w, 1}})
+		y++
+	}
+}
+
 // paneAt returns the leaf covering a screen coordinate.
 func (l *layout) paneAt(x, y int) *node {
 	for _, leaf := range l.leaves {
@@ -169,27 +220,49 @@ func (l *layout) sepAt(x, y int) *sep {
 	return nil
 }
 
+// headerAt returns the collapsed stack layer whose title bar covers a
+// screen coordinate, so a click can bring it to the front.
+func (l *layout) headerAt(x, y int) *node {
+	for _, h := range l.headers {
+		if h.r.contains(x, y) {
+			return h.node
+		}
+	}
+	return nil
+}
+
 // render draws the tree as one frame. Every pane is squared off to its exact
-// rect first, so blocks line up by construction.
-func render(n *node, l *layout) string {
+// rect first, so blocks line up by construction, then boxed with its own
+// border — so the gap a split or stack leaves between siblings only needs
+// to stay blank, not draw a second divider on top of it.
+func render(n *node, l *layout, active *node, th theme) string {
 	r := l.rects[n]
 	if n.pane != nil {
-		return fit(n.pane.view(), r.w, r.h)
+		return borderPane(n.pane, r, n == active, th)
 	}
 	if n.dir == dirStack {
-		return render(n.children[n.activeLayer()], l)
+		before, after := stackRows(n, r.h)
+		rows := make([]string, 0, len(before)+1+len(after))
+		for _, c := range before {
+			rows = append(rows, collapsedHeader(c, r.w, th, false))
+		}
+		rows = append(rows, render(n.children[n.activeLayer()], l, active, th))
+		for _, c := range after {
+			rows = append(rows, collapsedHeader(c, r.w, th, true))
+		}
+		return strings.Join(rows, "\n")
 	}
 	parts := make([]string, len(n.children))
 	for i, c := range n.children {
-		parts[i] = render(c, l)
+		parts[i] = render(c, l, active, th)
 	}
 	if n.dir == dirVert {
-		return strings.Join(parts, "\n"+strings.Repeat("─", r.w)+"\n")
+		return strings.Join(parts, "\n"+strings.Repeat(" ", r.w)+"\n")
 	}
 	return joinH(parts, r.h)
 }
 
-// joinH glues equal-height blocks side by side with a vertical gutter.
+// joinH glues equal-height blocks side by side across a blank gutter.
 func joinH(parts []string, h int) string {
 	cols := make([][]string, len(parts))
 	for i, p := range parts {
@@ -202,7 +275,7 @@ func joinH(parts []string, h int) string {
 		}
 		for i, c := range cols {
 			if i > 0 {
-				b.WriteString("│")
+				b.WriteByte(' ')
 			}
 			if y < len(c) {
 				b.WriteString(c[y])

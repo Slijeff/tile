@@ -13,9 +13,14 @@ import (
 func (s *server) key(k tea.Key) {
 	s.dirty = true
 
-	// The picker is modal: every key steers it until it closes.
+	// The picker and rename prompt are modal: every key steers them until
+	// they close.
 	if s.picker != nil {
 		s.pickerKey(k)
+		return
+	}
+	if s.renamer != nil {
+		s.renamerKey(k)
 		return
 	}
 
@@ -47,6 +52,7 @@ func (s *server) key(k tea.Key) {
 func (s *server) sendKey(k tea.Key) {
 	if p := s.activePane(); p != nil {
 		p.scroll = 0
+		p.trackCommand(k)
 		p.emu.SendKey(vt.KeyPressEvent(uv.Key(k)))
 	}
 }
@@ -71,6 +77,10 @@ func (s *server) command(k tea.Key) {
 		if step == 0 {
 			if n := neighbour(l, w.active, d, fwd); n != nil {
 				w.active = n
+			} else if w.active.stackAncestor() != nil {
+				// No spatial neighbour that way: a stacked pane has none, so
+				// treat the dead end as a request to cycle its layer instead.
+				s.cycleLayer(fwd)
 			}
 			return
 		}
@@ -104,14 +114,16 @@ func (s *server) command(k tea.Key) {
 		s.split(dirVert)
 	case s.km.Stack:
 		s.stack()
-	case s.km.CycleLayer:
-		s.cycleLayer()
+	case s.km.Zoom:
+		s.toggleZoom()
 	case s.km.KillPane:
 		if p := s.activePane(); p != nil {
 			s.paneExited(p)
 		}
 	case s.km.KillWindow:
 		s.closeWindow(s.cur)
+	case s.km.Rename:
+		s.openRenamer()
 	case s.km.Theme:
 		s.openPicker()
 	case s.km.Detach:
@@ -188,18 +200,42 @@ func (s *server) stack() {
 	s.layoutNow()
 }
 
-// cycleLayer switches to the next pane stacked behind the active one, like
-// flipping between layers in an image editor. No-op if the active pane is
-// not part of a stack.
-func (s *server) cycleLayer() {
+// cycleLayer switches to the next (forward) or previous pane stacked behind
+// the active one, like flipping between layers in an image editor. No-op if
+// the active pane is not part of a stack.
+func (s *server) cycleLayer(forward bool) {
 	w := s.win()
 	p := w.active.stackAncestor()
 	if p == nil {
 		return
 	}
-	p.layer = (p.activeLayer() + 1) % len(p.children)
+	n := len(p.children)
+	if forward {
+		p.layer = (p.activeLayer() + 1) % n
+	} else {
+		p.layer = (p.activeLayer() - 1 + n) % n
+	}
 	w.active = firstLeaf(p.children[p.layer])
 	s.dirty = true
+}
+
+// focusLayer makes n's own leaf — or, if n is itself a branch, its first
+// leaf — the window's active pane, and, when n sits inside a stack, brings
+// that layer to the front so render, the status bar and the next click or
+// cycle all agree on which one that is. Used for a plain click and for
+// clicking a collapsed stack layer's header to bring it forward.
+func (s *server) focusLayer(n *node) {
+	w := s.win()
+	w.active = firstLeaf(n)
+	p := n.stackAncestor()
+	if p == nil {
+		return
+	}
+	c := n
+	for c.parent != p {
+		c = c.parent
+	}
+	p.layer = indexOf(p.children, c)
 }
 
 // addPane splits the active pane along whichever axis currently has more
@@ -215,6 +251,17 @@ func (s *server) addPane() {
 		d = dirVert
 	}
 	s.split(d)
+}
+
+// toggleZoom flips the window's zoom flag. Zoomed, the active pane's node
+// still lives at its normal place in the tree — only rendering and pane
+// sizing treat it specially — so unzooming needs no restore step, and
+// switching w.active while zoomed (arrows, cycle-pane, …) just changes
+// which pane fills the window.
+func (s *server) toggleZoom() {
+	w := s.win()
+	w.zoomed = !w.zoomed
+	s.dirty = true
 }
 
 func (s *server) detach() {
@@ -270,7 +317,36 @@ func (s *server) mouse(m proto.ClientMsg) {
 		return
 	}
 
+	// Zoomed: only the active pane is visible, filling the whole body, so
+	// route every event straight to it instead of hit-testing the (hidden)
+	// tree geometry.
+	if w.zoomed {
+		leaf := w.active
+		if leaf == nil || leaf.pane == nil {
+			return
+		}
+		if !leaf.pane.mouseOn {
+			if m.Kind == proto.MouseWheel {
+				switch mo.Button {
+				case tea.MouseWheelUp:
+					leaf.pane.scrollBy(scrollLines)
+				case tea.MouseWheelDown:
+					leaf.pane.scrollBy(-scrollLines)
+				}
+			}
+			return
+		}
+		r := s.body()
+		mo.X, mo.Y = mo.X-r.x, mo.Y-r.y
+		leaf.pane.emu.SendMouse(toVTMouse(m.Kind, mo))
+		return
+	}
+
 	if m.Kind == proto.MouseClick {
+		if h := l.headerAt(mo.X, mo.Y); h != nil {
+			s.focusLayer(h) // clicking a collapsed stack layer's header brings it forward
+			return
+		}
 		if sp := l.sepAt(mo.X, mo.Y); sp != nil {
 			grabbed := *sp // the layout is rebuilt every frame; keep a copy
 			s.drag = &grabbed
@@ -289,7 +365,7 @@ func (s *server) mouse(m proto.ClientMsg) {
 	if !leaf.pane.mouseOn {
 		switch m.Kind {
 		case proto.MouseClick:
-			w.active = leaf // plain shell: a click just moves focus
+			s.focusLayer(leaf) // plain shell: a click just moves focus
 		case proto.MouseWheel:
 			switch mo.Button {
 			case tea.MouseWheelUp:

@@ -130,8 +130,13 @@ func TestStackShowsOnlyActiveLayer(t *testing.T) {
 	if l.leaves[0] != b {
 		t.Fatal("the newest layer should be the active one")
 	}
-	if got := l.rects[b]; got != r {
-		t.Fatalf("the active layer should take the whole rect: %+v", got)
+	// The other layer collapses to a one-row header above the active one,
+	// so the active layer's rect shrinks by that row.
+	if got, want := l.rects[b], (rect{0, 1, 80, 23}); got != want {
+		t.Fatalf("the active layer should fill the rect minus the header row: got %+v, want %+v", got, want)
+	}
+	if len(l.headers) != 1 || l.headers[0].node.pane != orig || l.headers[0].r != (rect{0, 0, 80, 1}) {
+		t.Fatalf("the inactive layer should collapse to a header row above the active one, got %+v", l.headers)
 	}
 
 	root.layer = 0
@@ -156,6 +161,22 @@ func TestStackCloseFallsBackToRemainingLayer(t *testing.T) {
 	}
 	if got := len(leaves(root)); got != 2 {
 		t.Fatalf("after closing a layer: %d panes, want 2", got)
+	}
+}
+
+// A stack with more layers than the rect has rows must still leave at
+// least one row for the active layer's own content, trimming the header
+// farthest from it first.
+func TestStackRowsTrimsFarthestHeaderWhenTooShort(t *testing.T) {
+	b := &node{dir: dirStack, weight: 1}
+	for range 3 {
+		b.children = append(b.children, &node{parent: b, weight: 1})
+	}
+	b.layer = 2 // last child active
+
+	before, after := stackRows(b, 2) // 2 rows: room for 1 header plus 1 content row
+	if len(before) != 1 || before[0] != b.children[1] || len(after) != 0 {
+		t.Fatalf("got before=%v after=%v, want only children[1]'s header kept", before, after)
 	}
 }
 
