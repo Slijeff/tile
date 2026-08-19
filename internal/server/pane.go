@@ -28,9 +28,9 @@ type pane struct {
 	scroll  int  // lines scrolled back from live output; 0 = following live
 	w, h    int
 
-	cmdBuf   []rune // the line typed so far, tracked until the first Enter names the pane
-	cmdNamed bool   // the one-time auto-rename from the first command has already happened
-	autoName string // set once cmdNamed, from the first command; the pane's own border name
+	cmdBuf     []rune // the line typed so far, tracked until the first Enter names the pane
+	named      bool   // the border name has been set, either by trackCommand or a manual rename
+	borderName string // set once named; the pane's own border name, distinct from title
 
 	wideCols int       // widest column count snapshotted since full recovery; 0 = none held
 	wideRows []uv.Line // rows captured at wideCols, for restoring what a width shrink truncated
@@ -103,13 +103,14 @@ func (p *pane) setMouse(m ansi.Mode, on bool) {
 	}
 }
 
-// borderTitle returns what the pane's own border/header should show: the
-// first command it ran, once there's been one, otherwise whatever its
-// shell calls itself. Kept separate from title (which drives the window
-// tab) so an auto-rename shows up on the pane but never leaks into the tab.
+// borderTitle returns what the pane's own border/header should show: an
+// override name — auto-tracked from the first command, or set by a manual
+// rename — once there is one, otherwise whatever its shell calls itself.
+// Kept separate from title (which drives the window tab) so neither kind
+// of override ever leaks into the tab.
 func (p *pane) borderTitle() string {
-	if p.cmdNamed {
-		return p.autoName
+	if p.named {
+		return p.borderName
 	}
 	return p.title
 }
@@ -120,12 +121,13 @@ const maxAutoTitleLen = 24
 
 // trackCommand watches keystrokes on their way to the shell to auto-name
 // the pane after the first command line it runs, tmux-style, truncated if
-// it's too long. It stops watching once that's happened, so later commands
-// don't keep renaming the pane, and gives up on the in-progress line for
-// anything it doesn't recognize as plain typing (arrows, tab-completion,
-// Ctrl+key combos, …) rather than risk naming the pane after a fragment.
+// it's too long. It stops watching once the pane has a border name — from
+// this or a manual rename — so later commands don't keep relabeling it,
+// and gives up on the in-progress line for anything it doesn't recognize
+// as plain typing (arrows, tab-completion, Ctrl+key combos, …) rather than
+// risk naming the pane after a fragment.
 func (p *pane) trackCommand(k tea.Key) {
-	if p.cmdNamed {
+	if p.named {
 		return
 	}
 	switch {
@@ -137,12 +139,25 @@ func (p *pane) trackCommand(k tea.Key) {
 		}
 	case k.Code == tea.KeyEnter, k.Code == tea.KeyReturn:
 		if cmd := strings.TrimSpace(string(p.cmdBuf)); cmd != "" {
-			p.autoName, p.cmdNamed = truncateTitle(cmd), true
+			p.borderName, p.named = truncateTitle(cmd), true
 		}
 		p.cmdBuf = p.cmdBuf[:0]
 	default:
 		p.cmdBuf = p.cmdBuf[:0]
 	}
+}
+
+// rename sets the pane's border name from the rename prompt. A blank name
+// clears the override instead of pinning an empty label, reverting the
+// border to the shell title and re-arming trackCommand to auto-name the
+// pane after its next command — the same reset a manual window rename
+// used to give the tab.
+func (p *pane) rename(name string) {
+	if name = strings.TrimSpace(name); name == "" {
+		p.named, p.borderName = false, ""
+		return
+	}
+	p.borderName, p.named = truncateTitle(name), true
 }
 
 func truncateTitle(s string) string {

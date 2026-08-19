@@ -1,6 +1,8 @@
 package server
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
@@ -8,8 +10,9 @@ import (
 	"yatm/internal/proto"
 )
 
-// key routes a keystroke: lock toggle first, then the prefix state machine,
-// then straight through to the focused shell.
+// key routes a keystroke: lock toggle first, then the prefix state machine
+// (a pending chord counts as still being in it), then straight through to
+// the focused shell.
 func (s *server) key(k tea.Key) {
 	s.dirty = true
 
@@ -34,7 +37,7 @@ func (s *server) key(k tea.Key) {
 		s.sendKey(k)
 		return
 	}
-	if !s.prefix {
+	if !s.prefix && s.chord == "" {
 		if s.prefixSpec.matches(k) {
 			s.prefix = true
 			return
@@ -57,12 +60,24 @@ func (s *server) sendKey(k tea.Key) {
 	}
 }
 
-// command runs one prefixed keystroke.
+// command runs one prefixed keystroke. A key that leads a layered binding
+// (e.g. "p" leading to "pr") doesn't run immediately: it extends s.chord
+// and waits for the next keystroke, which extends or completes it in turn —
+// so a chord can be any number of keys deep, not just two.
 func (s *server) command(k tea.Key) {
 	w := s.win()
 	l := w.l
 	if l == nil {
 		l = s.layoutNow()
+	}
+
+	if s.chord != "" {
+		if k.Code == tea.KeyEscape {
+			s.chord = ""
+			return
+		}
+		s.match(s.chord+k.Text, w, l)
+		return
 	}
 
 	// Arrows move between panes; with a modifier they move the border instead.
@@ -97,9 +112,47 @@ func (s *server) command(k tea.Key) {
 		return
 	}
 
-	switch k.Text {
-	case s.km.NewWindow:
-		_ = s.newWindow()
+	s.match(k.Text, w, l)
+}
+
+// match runs seq if it completes a binding, extends s.chord if seq leads a
+// longer one, or — falling back to digit window-select at the top level —
+// drops it. This is the whole which-key state machine: called with a
+// single key or a chord-in-progress plus one more key, either way.
+func (s *server) match(seq string, w *window, l *layout) {
+	if s.run(seq, w, l) {
+		s.chord = ""
+		return
+	}
+	if s.km.leads(seq) {
+		s.chord = seq
+		return
+	}
+	s.chord = ""
+	if len(seq) == 1 && seq[0] >= '0' && seq[0] <= '9' {
+		if i := int(seq[0] - '0'); i < len(s.windows) {
+			s.cur = i
+		}
+	}
+}
+
+// leads reports whether seq is a strict prefix of some longer binding
+// (e.g. "p" leads "pr" and "px", and "pr" would in turn lead "prx" if a
+// keymap bound one), meaning the next keystroke should extend the chord
+// rather than cancel it.
+func (km keymap) leads(seq string) bool {
+	for _, spec := range km.bindings() {
+		if len(spec) > len(seq) && strings.HasPrefix(spec, seq) {
+			return true
+		}
+	}
+	return false
+}
+
+// run executes the action bound to seq — a single key or a completed
+// chord — and reports whether one matched.
+func (s *server) run(seq string, w *window, l *layout) bool {
+	switch seq {
 	case s.km.NextWindow:
 		s.cur = (s.cur + 1) % len(s.windows)
 	case s.km.PrevWindow:
@@ -116,13 +169,17 @@ func (s *server) command(k tea.Key) {
 		s.stack()
 	case s.km.Zoom:
 		s.toggleZoom()
-	case s.km.KillPane:
+	case s.km.Windows.Key + s.km.Windows.New:
+		_ = s.newWindow()
+	case s.km.Windows.Key + s.km.Windows.Kill:
+		s.closeWindow(s.cur)
+	case s.km.Windows.Key + s.km.Windows.Rename:
+		s.openWindowRenamer()
+	case s.km.Panes.Key + s.km.Panes.Kill:
 		if p := s.activePane(); p != nil {
 			s.paneExited(p)
 		}
-	case s.km.KillWindow:
-		s.closeWindow(s.cur)
-	case s.km.Rename:
+	case s.km.Panes.Key + s.km.Panes.Rename:
 		s.openRenamer()
 	case s.km.Theme:
 		s.openPicker()
@@ -131,12 +188,9 @@ func (s *server) command(k tea.Key) {
 	case s.km.Quit:
 		s.shutdown()
 	default:
-		if len(k.Text) == 1 && k.Text[0] >= '0' && k.Text[0] <= '9' {
-			if i := int(k.Text[0] - '0'); i < len(s.windows) {
-				s.cur = i
-			}
-		}
+		return false
 	}
+	return true
 }
 
 func arrow(c rune) (d dir, forward, ok bool) {

@@ -7,13 +7,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// helpEntry is one row of the prefix tooltip: a key (read from the keymap,
-// so a remapped keybinds.yaml shows correctly) and what it does.
-type helpEntry struct{ key, desc string }
-
+// helpEntries is the full prefix tooltip: one row per remappable action,
+// next/prev window folded into a single row, plus the structural bindings
+// (digit select, arrows) that always work but aren't configurable.
 func helpEntries(km keymap) []helpEntry {
 	return []helpEntry{
-		{km.NewWindow, "new window"},
 		{km.NextWindow + "/" + km.PrevWindow, "next / prev window"},
 		{"0-9", "select window"},
 		{km.NewPane, "new pane (auto direction)"},
@@ -23,21 +21,47 @@ func helpEntries(km keymap) []helpEntry {
 		{km.Zoom, "zoom the active pane"},
 		{km.CyclePane, "cycle panes"},
 		{"←↑↓→", "move focus (cycles layer at a dead end)"},
-		{km.KillPane, "kill pane"},
-		{km.KillWindow, "kill window"},
-		{km.Rename, "rename window"},
+		{km.Windows.Key, "windows…"},
+		{km.Panes.Key, "panes…"},
 		{km.Theme, "colorscheme picker"},
 		{km.Detach, "detach"},
 		{km.Quit, "quit"},
 	}
 }
 
+// chordEntries lists the remaining suffix of every binding reachable from
+// chord — e.g. chord "p" turns a "pr" binding into a "r" entry paired with
+// its label — for the which-key box shown while a chord is in progress.
+// Works for a chord of any depth: typing more keys just narrows this list
+// further, the same way it narrows command()'s dispatch.
+func chordEntries(km keymap, chord string) []helpEntry {
+	all := actionEntries(km)
+	entries := make([]helpEntry, 0, len(all))
+	for _, e := range all {
+		if len(e.key) > len(chord) && strings.HasPrefix(e.key, chord) {
+			entries = append(entries, helpEntry{e.key[len(chord):], e.desc})
+		}
+	}
+	return entries
+}
+
 // helpBox renders the prefix tooltip as a bordered box, one line per
 // []string entry, every line the same visible width.
 func helpBox(km keymap, th theme) []string {
-	entries := helpEntries(km)
-	title := "» " + km.Prefix
+	return entriesBox("» "+km.Prefix, helpEntries(km), th)
+}
 
+// chordBox renders the which-key box for a chord in progress: the title
+// shows the full sequence typed so far, and each row the key (or further
+// leader) that continues it.
+func chordBox(chord string, km keymap, th theme) []string {
+	return entriesBox("» "+km.Prefix+" "+chord, chordEntries(km, chord), th)
+}
+
+// entriesBox is the shared renderer behind helpBox and chordBox: a bordered
+// box with a title row and one "key → desc" row per entry, every line the
+// same visible width.
+func entriesBox(title string, entries []helpEntry, th theme) []string {
 	keyWidth, textWidth := 0, ansi.StringWidth(title)
 	for _, e := range entries {
 		if w := len([]rune(e.key)); w > keyWidth {

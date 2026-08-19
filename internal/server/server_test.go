@@ -36,14 +36,16 @@ func TestStatusBarModeBadge(t *testing.T) {
 	cases := []struct {
 		name           string
 		prefix, locked bool
+		chord          string
 		want           string
 	}{
-		{"normal", false, false, "NORMAL"},
-		{"prefix", true, false, "PREFIX"},
-		{"locked", false, true, "LOCKED"},
+		{"normal", false, false, "", "NORMAL"},
+		{"prefix", true, false, "", "PREFIX"},
+		{"locked", false, true, "", "LOCKED"},
+		{"chord pending", false, false, "p", "PREFIX"},
 	}
 	for _, c := range cases {
-		s := &server{windows: []*window{win}, w: 80, prefix: c.prefix, locked: c.locked}
+		s := &server{windows: []*window{win}, w: 80, prefix: c.prefix, locked: c.locked, chord: c.chord}
 		if got := s.statusBar(); !strings.Contains(got, c.want) {
 			t.Fatalf("%s: statusBar() = %q, want mode badge %q", c.name, got, c.want)
 		}

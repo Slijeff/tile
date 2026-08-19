@@ -47,12 +47,37 @@ func (c *client) send(m proto.ServerMsg) {
 }
 
 type window struct {
-	name       string
-	customName bool // true once the user has manually renamed via the rename keybind
-	root       *node
-	active     *node
-	l          *layout // geometry from the last frame; mouse and resize read it
-	zoomed     bool    // active pane fills the window, hiding the rest of the tree
+	name   string
+	named  bool // name was set by a manual rename, overriding the active pane's title
+	root   *node
+	active *node
+	l      *layout // geometry from the last frame; mouse and resize read it
+	zoomed bool    // active pane fills the window, hiding the rest of the tree
+}
+
+// displayName returns what the window's tab should show: a manual rename
+// if it has one, otherwise the active pane's own title — the same source
+// tabLine used before window rename existed — falling back to the
+// window's stored name if it has no active pane.
+func (w *window) displayName() string {
+	if w.named {
+		return w.name
+	}
+	if w.active != nil && w.active.pane != nil {
+		return w.active.pane.title
+	}
+	return w.name
+}
+
+// rename sets the window's manual tab name. A blank name clears the
+// override, reverting the tab to following the active pane's title again —
+// the same reset a manual pane rename gives that pane's border.
+func (w *window) rename(name string) {
+	if name = strings.TrimSpace(name); name == "" {
+		w.named, w.name = false, ""
+		return
+	}
+	w.name, w.named = truncateTitle(name), true
 }
 
 // server owns every pane, tree and mode flag. All of it is touched from the
@@ -65,7 +90,8 @@ type server struct {
 	cur     int
 	w, h    int
 	cli     *client
-	prefix  bool // the prefix key was pressed; the next key is a command
+	prefix  bool   // the prefix key was pressed; the next key is a command
+	chord   string // first key of a layered binding (e.g. "p"), waiting on its second
 	locked  bool
 	drag    *sep // separator being dragged, if any
 	dragPos int
@@ -80,7 +106,7 @@ type server struct {
 	theme   theme    // current colorscheme, used for all chrome rendering
 	themes  []theme  // colorschemes offered by the picker
 	picker  *picker  // open colorscheme picker, nil when closed
-	renamer *renamer // open window-rename prompt, nil when closed
+	renamer *renamer // open pane/window rename prompt, nil when closed
 
 	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
 }
@@ -96,17 +122,17 @@ func RunServer() error {
 	if err != nil {
 		return err
 	}
-	km := loadKeymap()
+	cfg := loadConfig()
 	s := &server{
 		sock:       sock,
 		ln:         ln,
 		events:     make(chan event, 256),
 		w:          80,
 		h:          24,
-		km:         km,
-		prefixSpec: parseKeySpec(km.Prefix),
-		lockSpec:   parseKeySpec(km.Lock),
-		theme:      loadTheme(),
+		km:         cfg.Keymap,
+		prefixSpec: parseKeySpec(cfg.Keymap.Prefix),
+		lockSpec:   parseKeySpec(cfg.Keymap.Lock),
+		theme:      resolveTheme(cfg.Theme),
 		themes:     catppuccinThemes,
 	}
 	if err := s.newWindow(); err != nil {
@@ -287,7 +313,9 @@ func (s *server) frame() proto.ServerMsg {
 	case s.picker != nil:
 		body = overlayCenter(body, bd.w, bd.h, pickerBox(themeNames(s.themes), s.picker.sel, s.theme))
 	case s.renamer != nil:
-		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.theme))
+		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.renamer.forWindow, s.theme))
+	case s.chord != "":
+		body = overlay(body, bd.w, bd.h, chordBox(s.chord, s.km, s.theme))
 	case s.prefix:
 		body = overlay(body, bd.w, bd.h, helpBox(s.km, s.theme))
 	}
@@ -307,7 +335,7 @@ func (s *server) statusBar() string {
 	switch {
 	case s.locked:
 		mode, badge = "LOCKED", s.theme.Red
-	case s.prefix:
+	case s.prefix || s.chord != "":
 		mode, badge = "PREFIX", s.theme.Yellow
 	}
 	left := " " + mode + " "

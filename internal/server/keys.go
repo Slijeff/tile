@@ -1,111 +1,125 @@
 package server
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"gopkg.in/yaml.v3"
 )
 
 // keymap lists every key yatm binds. Prefix and Lock take a "mod+key" spec
-// (e.g. "ctrl+b", "f12"); every other action is the single character typed
-// right after the prefix. Arrow-key navigation/resize, cycling a stacked
-// pane's layers at an arrow's dead end, the 0-9 window selectors, and
-// pressing the prefix twice to send it through are structural and not
-// remapped here.
+// (e.g. "ctrl+b", "f12"); every other top-level action is the single
+// character typed right after the prefix. Windows and Panes are
+// sub-layers: pressing their Key doesn't run an action by itself, it opens
+// a second which-key tooltip for the actions nested inside it. Arrow-key
+// navigation/resize, cycling a stacked pane's layers at an arrow's dead
+// end, the 0-9 window selectors, and pressing the prefix twice to send it
+// through are structural and not remapped here.
 type keymap struct {
-	Prefix     string `yaml:"prefix"` // enters command mode
-	Lock       string `yaml:"lock"`   // toggles lock mode, prefix or not
-	NewWindow  string `yaml:"new_window"`
-	NextWindow string `yaml:"next_window"`
-	PrevWindow string `yaml:"prev_window"`
-	CyclePane  string `yaml:"cycle_pane"`  // move to the next pane in tree order
-	NewPane    string `yaml:"new_pane"`    // split along whichever axis has more room
-	SplitHoriz string `yaml:"split_horiz"` // side by side
-	SplitVert  string `yaml:"split_vert"`  // top to bottom
-	Stack      string `yaml:"stack"`       // layer a new pane behind the active one
-	Zoom       string `yaml:"zoom"`        // grow the active pane to fill the window
-	KillPane   string `yaml:"kill_pane"`
-	KillWindow string `yaml:"kill_window"`
-	Rename     string `yaml:"rename"` // renames the current window
-	Theme      string `yaml:"theme"`  // opens the colorscheme picker
-	Detach     string `yaml:"detach"`
-	Quit       string `yaml:"quit"`
+	Prefix     string      `yaml:"prefix"` // enters command mode
+	Lock       string      `yaml:"lock"`   // toggles lock mode, prefix or not
+	NextWindow string      `yaml:"next_window"`
+	PrevWindow string      `yaml:"prev_window"`
+	CyclePane  string      `yaml:"cycle_pane"`  // move to the next pane in tree order
+	NewPane    string      `yaml:"new_pane"`    // split along whichever axis has more room
+	SplitHoriz string      `yaml:"split_horiz"` // side by side
+	SplitVert  string      `yaml:"split_vert"`  // top to bottom
+	Stack      string      `yaml:"stack"`       // layer a new pane behind the active one
+	Zoom       string      `yaml:"zoom"`        // grow the active pane to fill the window
+	Theme      string      `yaml:"theme"`       // opens the colorscheme picker
+	Detach     string      `yaml:"detach"`
+	Quit       string      `yaml:"quit"`
+	Windows    windowLayer `yaml:"windows"` // sub-layer: press Key, then New, Kill or Rename
+	Panes      paneLayer   `yaml:"panes"`   // sub-layer: press Key, then Kill or Rename
+}
+
+// windowLayer is the "w" sub-layer: press Key to open it, then New, Kill,
+// or Rename to act on windows. A blank New/Kill/Rename leaves that action
+// out of the layer entirely, rather than collapsing to Key alone.
+type windowLayer struct {
+	Key    string `yaml:"key"`    // leader that opens the layer, e.g. "w"
+	New    string `yaml:"new"`    // create a new window
+	Kill   string `yaml:"kill"`   // kill the active window
+	Rename string `yaml:"rename"` // rename the active window
+}
+
+// paneLayer is the "p" sub-layer: press Key to open it, then Kill or
+// Rename to act on the active pane. A blank Kill/Rename leaves that action
+// out of the layer entirely, rather than collapsing to Key alone.
+type paneLayer struct {
+	Key    string `yaml:"key"`    // leader that opens the layer, e.g. "p"
+	Kill   string `yaml:"kill"`   // kill the active pane
+	Rename string `yaml:"rename"` // rename the active pane
 }
 
 var defaultKeymap = keymap{
 	Prefix:     "ctrl+b",
 	Lock:       "f12",
-	NewWindow:  "c",
-	NextWindow: "n",
-	PrevWindow: "p",
+	NextWindow: "]",
+	PrevWindow: "[",
 	CyclePane:  "o",
 	NewPane:    "a",
-	SplitHoriz: "%",
-	SplitVert:  `"`,
+	SplitHoriz: "|",
+	SplitVert:  "-",
 	Stack:      "s",
 	Zoom:       "z",
-	KillPane:   "x",
-	KillWindow: "&",
-	Rename:     ",",
 	Theme:      "T",
 	Detach:     "d",
 	Quit:       "q",
+	Windows:    windowLayer{Key: "w", New: "c", Kill: "&", Rename: "r"},
+	Panes:      paneLayer{Key: "p", Kill: "x", Rename: "r"},
 }
 
-// configDir is where yatm keeps its config files (keybinds.yaml, theme.yaml):
-// always ~/.config/yatm, on every OS, rather than os.UserConfigDir's
-// platform default (e.g. ~/Library/Application Support on macOS).
-func configDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+// helpEntry pairs one remappable action's label with its currently bound
+// key or chord — the shared source for keymap.bindings(), the full prefix
+// tooltip, and the which-key box shown while a chord is in progress.
+type helpEntry struct{ key, desc string }
+
+// actionEntries lists every remappable action once, sub-layer actions keyed
+// by their full Key+leaf sequence. Prefix and lock aren't included — they're
+// matched structurally by keySpec, not as literal text, and can never be
+// part of a chord. A blank leaf (Windows.New/Kill/Rename, Panes.Kill/Rename)
+// omits that action rather than degenerating to the layer's Key alone.
+func actionEntries(km keymap) []helpEntry {
+	entries := []helpEntry{
+		{km.NextWindow, "next window"},
+		{km.PrevWindow, "prev window"},
+		{km.CyclePane, "cycle panes"},
+		{km.NewPane, "new pane (auto direction)"},
+		{km.SplitHoriz, "split side-by-side"},
+		{km.SplitVert, "split top-to-bottom"},
+		{km.Stack, "stack a pane"},
+		{km.Zoom, "zoom the active pane"},
+		{km.Theme, "colorscheme picker"},
+		{km.Detach, "detach"},
+		{km.Quit, "quit"},
 	}
-	return filepath.Join(home, ".config", "yatm"), nil
+	if km.Windows.New != "" {
+		entries = append(entries, helpEntry{km.Windows.Key + km.Windows.New, "new window"})
+	}
+	if km.Windows.Kill != "" {
+		entries = append(entries, helpEntry{km.Windows.Key + km.Windows.Kill, "kill window"})
+	}
+	if km.Windows.Rename != "" {
+		entries = append(entries, helpEntry{km.Windows.Key + km.Windows.Rename, "rename window"})
+	}
+	if km.Panes.Kill != "" {
+		entries = append(entries, helpEntry{km.Panes.Key + km.Panes.Kill, "kill pane"})
+	}
+	if km.Panes.Rename != "" {
+		entries = append(entries, helpEntry{km.Panes.Key + km.Panes.Rename, "rename pane"})
+	}
+	return entries
 }
 
-// keymapPath returns where the config file lives, creating no directories.
-func keymapPath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
+// bindings lists every configured key or chord, for the chord dispatcher in
+// command.go to check a keystroke against.
+func (km keymap) bindings() []string {
+	entries := actionEntries(km)
+	specs := make([]string, len(entries))
+	for i, e := range entries {
+		specs[i] = e.key
 	}
-	return filepath.Join(dir, "keybinds.yaml"), nil
-}
-
-// loadKeymap reads the config file, writing out the defaults (so the file
-// explicitly lists every keybind for the user to edit) if none exists yet.
-// Any error falls back to the defaults rather than failing startup.
-func loadKeymap() keymap {
-	path, err := keymapPath()
-	if err != nil {
-		return defaultKeymap
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeDefaultKeymap(path)
-		}
-		return defaultKeymap
-	}
-	km := defaultKeymap
-	if err := yaml.Unmarshal(data, &km); err != nil {
-		return defaultKeymap
-	}
-	return km
-}
-
-func writeDefaultKeymap(path string) {
-	data, err := yaml.Marshal(defaultKeymap)
-	if err != nil {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(path, data, 0o600)
+	return specs
 }
 
 // keySpec matches a tea.Key by code and modifier, for the two bindings

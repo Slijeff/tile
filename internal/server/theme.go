@@ -2,13 +2,10 @@ package server
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"gopkg.in/yaml.v3"
 )
 
 // theme is the palette yatm's own chrome (tab bar, status bar, tooltip and
@@ -67,58 +64,6 @@ func themeNames(ts []theme) []string {
 		names[i] = t.Name
 	}
 	return names
-}
-
-// themePath mirrors keymapPath: same config directory, its own file.
-func themePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "theme.yaml"), nil
-}
-
-type themeConfig struct {
-	Name string `yaml:"name"`
-}
-
-// loadTheme reads the persisted choice, falling back to Catppuccin Mocha if
-// nothing is saved yet or the saved name no longer matches a known theme.
-func loadTheme() theme {
-	def := catppuccinThemes[len(catppuccinThemes)-1]
-	path, err := themePath()
-	if err != nil {
-		return def
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return def
-	}
-	var c themeConfig
-	if err := yaml.Unmarshal(data, &c); err != nil {
-		return def
-	}
-	for _, t := range catppuccinThemes {
-		if t.Name == c.Name {
-			return t
-		}
-	}
-	return def
-}
-
-func saveTheme(name string) {
-	path, err := themePath()
-	if err != nil {
-		return
-	}
-	data, err := yaml.Marshal(themeConfig{Name: name})
-	if err != nil {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(path, data, 0o600)
 }
 
 // picker is the colorscheme picker's open state.

@@ -43,18 +43,18 @@ func TestPickerEnterKeepsAndPersistsSelection(t *testing.T) {
 	if s.theme.Name != want.Name {
 		t.Fatalf("theme = %q, want %q", s.theme.Name, want.Name)
 	}
-	if got := loadTheme(); got.Name != want.Name {
-		t.Fatalf("loadTheme() = %q, want persisted %q", got.Name, want.Name)
+	if got := loadConfig(); got.Theme != want.Name {
+		t.Fatalf("loadConfig().Theme = %q, want persisted %q", got.Theme, want.Name)
 	}
 }
 
-func TestLoadThemeFallsBackWhenUnset(t *testing.T) {
+func TestLoadThemeFallsBackToDefaultWhenUnset(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 
-	want := catppuccinThemes[len(catppuccinThemes)-1] // Mocha
-	if got := loadTheme(); got.Name != want.Name {
-		t.Fatalf("loadTheme() = %q, want default %q", got.Name, want.Name)
+	want := defaultConfig.Theme // Catppuccin Macchiato
+	if got := resolveTheme(loadConfig().Theme); got.Name != want {
+		t.Fatalf("resolveTheme(loadConfig().Theme) = %q, want default %q", got.Name, want)
 	}
 }
 

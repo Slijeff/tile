@@ -214,8 +214,8 @@ func TestTrackCommandNamesPaneAfterFirstCommand(t *testing.T) {
 	if got := p.borderTitle(); got != "git status" {
 		t.Fatalf("borderTitle() = %q, want %q", got, "git status")
 	}
-	if !p.cmdNamed {
-		t.Fatal("cmdNamed should be set once the pane has been auto-named")
+	if !p.named {
+		t.Fatal("named should be set once the pane has been auto-named")
 	}
 	if p.title != "zsh" {
 		t.Fatalf("title = %q, the auto-rename must not touch the shell/tab title", p.title)
@@ -290,7 +290,7 @@ func TestTrackCommandResetsOnUnrecognizedKey(t *testing.T) {
 func TestTrackCommandIgnoresBlankLine(t *testing.T) {
 	p := &pane{title: "zsh"}
 	p.trackCommand(tea.Key{Code: tea.KeyEnter})
-	if p.cmdNamed {
+	if p.named {
 		t.Fatal("an empty line should not count as the first command")
 	}
 	if got := p.borderTitle(); got != "zsh" {
