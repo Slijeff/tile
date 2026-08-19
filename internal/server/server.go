@@ -1,0 +1,389 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/charmbracelet/x/ansi"
+
+	"yatm/internal/proto"
+)
+
+// Event kinds arriving on the server's single event channel.
+const (
+	evOutput = iota // a pane produced output
+	evExit          // a pane's shell died
+	evClient        // a message from the attached client
+	evAttach        // a client connected
+	evGone          // a client's connection dropped
+	evSignal        // SIGTERM/SIGINT
+)
+
+type event struct {
+	kind int
+	pane *pane
+	data []byte
+	msg  proto.ClientMsg
+	cli  *client
+}
+
+type client struct {
+	conn net.Conn
+	out  chan proto.ServerMsg
+}
+
+// send drops the frame rather than blocking the event loop on a slow client.
+func (c *client) send(m proto.ServerMsg) {
+	select {
+	case c.out <- m:
+	default:
+	}
+}
+
+type window struct {
+	name   string
+	root   *node
+	active *node
+	l      *layout // geometry from the last frame; mouse and resize read it
+}
+
+// server owns every pane, tree and mode flag. All of it is touched from the
+// event loop goroutine only, which is why none of it is locked.
+type server struct {
+	sock    string
+	ln      net.Listener
+	events  chan event
+	windows []*window
+	cur     int
+	w, h    int
+	cli     *client
+	prefix  bool // the prefix key was pressed; the next key is a command
+	locked  bool
+	drag    *sep // separator being dragged, if any
+	dragPos int
+	dirty   bool
+	nextID  int
+	done    bool
+
+	km         keymap
+	prefixSpec keySpec
+	lockSpec   keySpec
+
+	theme  theme   // current colorscheme, used for all chrome rendering
+	themes []theme // colorschemes offered by the picker
+	picker *picker // open colorscheme picker, nil when closed
+
+	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
+}
+
+// RunServer runs the yatm daemon: one event loop owning every window, pane
+// and mode flag, until the last window closes or it is told to shut down.
+func RunServer() error {
+	sock, err := proto.SocketPath()
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return err
+	}
+	km := loadKeymap()
+	s := &server{
+		sock:       sock,
+		ln:         ln,
+		events:     make(chan event, 256),
+		w:          80,
+		h:          24,
+		km:         km,
+		prefixSpec: parseKeySpec(km.Prefix),
+		lockSpec:   parseKeySpec(km.Lock),
+		theme:      loadTheme(),
+		themes:     catppuccinThemes,
+	}
+	if err := s.newWindow(); err != nil {
+		return err
+	}
+	go s.accept()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sig
+		s.events <- event{kind: evSignal}
+	}()
+
+	s.loop()
+	_ = ln.Close()
+	_ = os.Remove(sock)
+	return nil
+}
+
+func (s *server) accept() {
+	for {
+		conn, err := s.ln.Accept()
+		if err != nil {
+			return
+		}
+		c := &client{conn: conn, out: make(chan proto.ServerMsg, 4)}
+		go c.write()
+		go s.read(c)
+	}
+}
+
+func (c *client) write() {
+	enc := json.NewEncoder(c.conn)
+	for m := range c.out {
+		if err := enc.Encode(m); err != nil {
+			return
+		}
+	}
+}
+
+func (s *server) read(c *client) {
+	s.events <- event{kind: evAttach, cli: c}
+	dec := json.NewDecoder(c.conn)
+	for {
+		var m proto.ClientMsg
+		if err := dec.Decode(&m); err != nil {
+			s.events <- event{kind: evGone, cli: c}
+			_ = c.conn.Close()
+			return
+		}
+		s.events <- event{kind: evClient, msg: m, cli: c}
+	}
+}
+
+// loop is the whole server: one goroutine, one owner of the state. Frames are
+// pushed on a tick so a chatty pane cannot cause a render per byte.
+func (s *server) loop() {
+	tick := time.NewTicker(time.Second / 60)
+	defer tick.Stop()
+	for !s.done {
+		select {
+		case e := <-s.events:
+			s.handle(e)
+		case <-tick.C:
+			if s.dirty && s.cli != nil && s.h > 2 {
+				s.cli.send(s.frame())
+				s.dirty = false
+			}
+		}
+	}
+}
+
+func (s *server) handle(e event) {
+	switch e.kind {
+	case evOutput:
+		// While scrolled back, keep the viewport pinned to the same history
+		// instead of drifting as new lines push into the scrollback buffer.
+		before := e.pane.emu.ScrollbackLen()
+		_, _ = e.pane.emu.Write(e.data)
+		if e.pane.scroll > 0 {
+			e.pane.scroll += e.pane.emu.ScrollbackLen() - before
+		}
+		s.dirty = true
+	case evExit:
+		s.paneExited(e.pane)
+	case evAttach:
+		if s.cli != nil && s.cli != e.cli {
+			// ponytail: one client at a time, so there is no smallest-size
+			// negotiation. Mirroring needs a per-client layout and frame.
+			s.cli.send(proto.ServerMsg{Type: proto.MsgDetach})
+		}
+		s.cli = e.cli
+		s.dirty = true
+	case evGone:
+		if s.cli == e.cli {
+			s.cli = nil
+		}
+	case evClient:
+		s.client(e.msg)
+	case evSignal:
+		s.shutdown()
+	}
+}
+
+func (s *server) client(m proto.ClientMsg) {
+	switch m.Type {
+	case proto.MsgResize:
+		if m.W > 0 && m.H > 0 {
+			s.w, s.h = m.W, m.H
+			s.dirty = true
+		}
+	case proto.MsgKey:
+		s.key(m.Key)
+	case proto.MsgMouse:
+		s.mouse(m)
+	case proto.MsgDetach:
+		s.cli = nil
+	case proto.MsgKill:
+		s.shutdown()
+	}
+}
+
+func (s *server) win() *window { return s.windows[s.cur] }
+
+// body is the tree's rect: a row is reserved above it for the tab bar and
+// one below for the status bar.
+func (s *server) body() rect { return rect{0, 1, s.w, s.h - 2} }
+
+// tabBar renders the window-switcher row and records the clicked ranges.
+func (s *server) tabBar() string {
+	txt, hits := tabLine(s.windows, s.cur, s.w, s.theme)
+	s.tabs = hits
+	return txt
+}
+
+// layoutNow returns fresh geometry, for the paths that run between frames.
+func (s *server) layoutNow() *layout {
+	w := s.win()
+	w.l = computeLayout(w.root, s.body())
+	return w.l
+}
+
+func (s *server) activePane() *pane {
+	w := s.win()
+	if w.active == nil {
+		return nil
+	}
+	return w.active.pane
+}
+
+// frame lays the window out, syncs pane sizes to it, and renders.
+func (s *server) frame() proto.ServerMsg {
+	w := s.win()
+	l := computeLayout(w.root, s.body())
+	w.l = l
+	for _, leaf := range l.leaves {
+		r := l.rects[leaf]
+		leaf.pane.resize(r.w, r.h)
+	}
+	body := render(w.root, l)
+	switch {
+	case s.picker != nil:
+		bd := s.body()
+		body = overlayCenter(body, bd.w, bd.h, pickerBox(themeNames(s.themes), s.picker.sel, s.theme))
+	case s.prefix:
+		bd := s.body()
+		body = overlay(body, bd.w, bd.h, helpBox(s.km, s.theme))
+	}
+	m := proto.ServerMsg{Type: proto.MsgFrame, Content: s.tabBar() + "\n" + body + "\n" + s.statusBar()}
+	if r, ok := l.rects[w.active]; ok && w.active.pane != nil {
+		c := w.active.pane.emu.CursorPosition()
+		m.CurX, m.CurY, m.CurVis = r.x+c.X, r.y+c.Y, w.active.pane.curVis
+	}
+	return m
+}
+
+// statusBar is a colored badge for the current mode (normal/prefix/locked)
+// on the left, and window/layer position on the right.
+func (s *server) statusBar() string {
+	mode, badge := "NORMAL", s.theme.Green
+	switch {
+	case s.locked:
+		mode, badge = "LOCKED", s.theme.Red
+	case s.prefix:
+		mode, badge = "PREFIX", s.theme.Yellow
+	}
+	left := " " + mode + " "
+
+	var right string
+	if w := s.win(); w.active != nil {
+		if p := w.active.stackAncestor(); p != nil {
+			right += fmt.Sprintf("layer %d/%d  ", p.activeLayer()+1, len(p.children))
+		}
+	}
+	right += fmt.Sprintf("window %d/%d ", s.cur+1, len(s.windows))
+
+	fill := s.w - ansi.StringWidth(left) - 1 - ansi.StringWidth(right)
+	if fill < 0 {
+		fill = 0
+	}
+	line := fmt.Sprintf("\x1b[1m%s%s%s\x1b[22m%s %s%s\x1b[m",
+		fg(s.theme.Base), bg(badge), left,
+		fg(s.theme.Subtext)+bg(s.theme.Mantle), strings.Repeat(" ", fill), right)
+	if ansi.StringWidth(line) > s.w {
+		line = ansi.Truncate(line, s.w, "")
+	}
+	return line
+}
+
+func (s *server) newWindow() error {
+	h := s.h - 2
+	if h < 1 {
+		h = 1
+	}
+	p, err := newPane(s.nextID, s.w, h, s.events)
+	if err != nil {
+		return err
+	}
+	s.nextID++
+	root := &node{pane: p, weight: 1}
+	s.windows = append(s.windows, &window{name: p.title, root: root, active: root})
+	s.cur = len(s.windows) - 1
+	s.dirty = true
+	return nil
+}
+
+// paneExited tears down a dead pane and heals the tree around it.
+func (s *server) paneExited(p *pane) {
+	for wi, w := range s.windows {
+		for _, leaf := range leaves(w.root) {
+			if leaf.pane != p {
+				continue
+			}
+			next := closeNode(leaf)
+			if next == nil {
+				s.closeWindow(wi) // it was the window's last pane
+				return
+			}
+			p.close()
+			// closeNode may fold a branch away, orphaning the active node.
+			if indexOf(leaves(w.root), w.active) < 0 {
+				w.active = next
+			}
+			s.dirty = true
+			return
+		}
+	}
+}
+
+func (s *server) closeWindow(i int) {
+	if i < 0 || i >= len(s.windows) {
+		return
+	}
+	for _, leaf := range leaves(s.windows[i].root) {
+		leaf.pane.close()
+	}
+	s.windows = append(s.windows[:i:i], s.windows[i+1:]...)
+	if len(s.windows) == 0 {
+		s.shutdown()
+		return
+	}
+	if s.cur >= len(s.windows) {
+		s.cur = len(s.windows) - 1
+	}
+	s.dirty = true
+}
+
+func (s *server) shutdown() {
+	if s.done {
+		return
+	}
+	s.done = true
+	for _, w := range s.windows {
+		for _, leaf := range leaves(w.root) {
+			leaf.pane.close()
+		}
+	}
+	if s.cli != nil {
+		s.cli.send(proto.ServerMsg{Type: proto.MsgDetach})
+		time.Sleep(50 * time.Millisecond) // let the goodbye reach the client
+	}
+}

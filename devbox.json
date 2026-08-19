@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.18.0/.schema/devbox.schema.json",
+  "packages": ["go@latest"],
+  "shell": {
+    "scripts": {
+      "build": "go build -o yatm ./cmd/yatm",
+      "test":  "go test ./...",
+      "start": "go run ./cmd/yatm"
+    }
+  }
+}
