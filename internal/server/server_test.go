@@ -65,7 +65,7 @@ func TestLayerIndicatorAndCycleSurviveSplitInsideStack(t *testing.T) {
 	top := stack(root)
 	top.pane = &pane{}
 
-	l := computeLayout(root, r)
+	l := computeLayout(root, r, 1)
 	right := split(top, dirHoriz, l)
 	if right == nil {
 		t.Fatal("split should have room in an 80-wide rect")
@@ -140,7 +140,7 @@ func TestZoomFillsBodyAndRestoresOnExit(t *testing.T) {
 	defer left.close()
 
 	root := &node{pane: left, weight: 1}
-	l := computeLayout(root, rect{0, 0, 40, 20})
+	l := computeLayout(root, rect{0, 0, 40, 20}, 1)
 	right := split(root, dirHoriz, l)
 	if right == nil {
 		t.Fatal("split should have room in a 40-wide rect")
@@ -190,7 +190,7 @@ func TestMouseIgnoresTreeHitTestingWhileZoomed(t *testing.T) {
 	defer left.close()
 
 	root := &node{pane: left, weight: 1}
-	l := computeLayout(root, rect{0, 0, 40, 20})
+	l := computeLayout(root, rect{0, 0, 40, 20}, 1)
 	right := split(root, dirHoriz, l)
 	if right == nil {
 		t.Fatal("split should have room in a 40-wide rect")

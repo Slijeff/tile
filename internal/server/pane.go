@@ -31,9 +31,6 @@ type pane struct {
 	cmdBuf     []rune // the line typed so far, tracked until the first Enter names the pane
 	named      bool   // the border name has been set, either by trackCommand or a manual rename
 	borderName string // set once named; the pane's own border name, distinct from title
-
-	wideCols int       // widest column count snapshotted since full recovery; 0 = none held
-	wideRows []uv.Line // rows captured at wideCols, for restoring what a width shrink truncated
 }
 
 func shellPath() string {
@@ -215,21 +212,12 @@ func (p *pane) resize(w, h int) {
 	if w < 1 || h < 1 || (w == p.w && h == p.h) {
 		return
 	}
-	oldW := p.w
 	if h < p.h && !p.emu.IsAltScreen() {
 		p.shrinkHeight(h)
-	}
-	if w < oldW && !p.emu.IsAltScreen() {
-		p.snapshotWidth()
 	}
 	p.w, p.h = w, h
 	p.emu.Resize(w, h)
 	_ = pty.Setsize(p.ptmx, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
-	// Runs after Resize: the wider columns must already exist in the buffer
-	// before we can write saved content back into them.
-	if w > oldW && !p.emu.IsAltScreen() {
-		p.restoreWidth(oldW, w)
-	}
 }
 
 // shrinkHeight preserves content across a height reduction. vt's own Resize
@@ -280,61 +268,6 @@ func (p *pane) shrinkHeight(h int) {
 		cy = h - 1
 	}
 	_, _ = p.emu.Write([]byte(ansi.CursorPosition(c.X+1, cy+1)))
-}
-
-// snapshotWidth captures the pane's current full-width rows before a width
-// shrink truncates them — vt's Resize drops trailing columns with no
-// scrollback equivalent to catch them. Only takes a new snapshot when there
-// isn't already a wider one held, so a second, narrower shrink in the same
-// drag can't overwrite the original content with an already-truncated copy.
-func (p *pane) snapshotWidth() {
-	if p.wideCols != 0 && p.w <= p.wideCols {
-		return
-	}
-	rows := make([]uv.Line, p.h)
-	for y := range rows {
-		line := uv.NewLine(p.w)
-		for x := range p.w {
-			line.Set(x, p.emu.CellAt(x, y))
-		}
-		rows[y] = line
-	}
-	p.wideCols = p.w
-	p.wideRows = rows
-}
-
-// restoreWidth re-fills columns a prior shrink truncated, for every row
-// whose still-visible prefix (up to oldW, the width just before this call)
-// is unchanged since the snapshot — i.e. nothing was written there in
-// between, so restoring can't clobber newer output. Must run after the
-// buffer has already been grown to w columns.
-func (p *pane) restoreWidth(oldW, w int) {
-	if p.wideCols == 0 {
-		return
-	}
-	upto := min(w, p.wideCols)
-	for y, saved := range p.wideRows {
-		if y >= p.h {
-			break
-		}
-		fresh := true
-		for x := range oldW {
-			if !p.emu.CellAt(x, y).Equal(saved.At(x)) {
-				fresh = false
-				break
-			}
-		}
-		if !fresh {
-			continue
-		}
-		for x := oldW; x < upto; x++ {
-			p.emu.SetCell(x, y, saved.At(x))
-		}
-	}
-	if w >= p.wideCols {
-		p.wideCols = 0
-		p.wideRows = nil
-	}
 }
 
 func (p *pane) close() {

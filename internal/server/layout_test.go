@@ -20,7 +20,7 @@ func tree(d dir, n int) *node {
 
 func widths(t *testing.T, root *node, r rect) []int {
 	t.Helper()
-	l := computeLayout(root, r)
+	l := computeLayout(root, r, 1)
 	out := make([]int, len(root.children))
 	for i, c := range root.children {
 		out[i] = l.rects[c].w
@@ -47,12 +47,45 @@ func TestSizesExact(t *testing.T) {
 	eq(t, widths(t, tree(dirHoriz, 3), rect{0, 0, 81, 24}), []int{27, 26, 26}, "81 cols")
 }
 
+func TestMarginWidensGutter(t *testing.T) {
+	root := tree(dirHoriz, 2)
+	l := computeLayout(root, rect{0, 0, 21, 10}, 3)
+
+	if got, want := l.rects[root.children[0]], (rect{0, 0, 9, 10}); got != want {
+		t.Fatalf("first child: got %+v, want %+v", got, want)
+	}
+	if got, want := l.rects[root.children[1]], (rect{12, 0, 9, 10}); got != want {
+		t.Fatalf("second child should start 3 cells past the first (margin=3): got %+v, want %+v", got, want)
+	}
+	if len(l.seps) != 1 || l.seps[0].r.w != 3 {
+		t.Fatalf("gutter separator should be margin cells wide: got %+v", l.seps)
+	}
+}
+
+// The top-to-bottom split's gutter is measured in rows and the side-by-side
+// split's in columns; since terminal cells run roughly twice as tall as
+// they are wide, the row gutter must be about half as many cells so both
+// read as the same visual thickness.
+func TestVerticalGutterHalvesMargin(t *testing.T) {
+	hRoot := tree(dirHoriz, 2)
+	hl := computeLayout(hRoot, rect{0, 0, 21, 10}, 4)
+	if len(hl.seps) != 1 || hl.seps[0].r.w != 4 {
+		t.Fatalf("side-by-side gutter should stay the full margin: got %+v", hl.seps)
+	}
+
+	vRoot := tree(dirVert, 2)
+	vl := computeLayout(vRoot, rect{0, 0, 10, 21}, 4)
+	if len(vl.seps) != 1 || vl.seps[0].r.h != 2 {
+		t.Fatalf("top-to-bottom gutter should be half the margin: got %+v", vl.seps)
+	}
+}
+
 func TestResizeTransfersCells(t *testing.T) {
 	b := tree(dirHoriz, 3)
 	r := rect{0, 0, 80, 24}
 	before := widths(t, b, r)
 
-	resizeActive(b.children[0], dirHoriz, 5, computeLayout(b, r))
+	resizeActive(b.children[0], dirHoriz, 5, computeLayout(b, r, 1))
 	after := widths(t, b, r)
 
 	if after[0] != before[0]+5 || after[1] != before[1]-5 {
@@ -72,7 +105,7 @@ func TestResizeClampsAtMinimum(t *testing.T) {
 	before := widths(t, b, r)
 
 	// Far more than the neighbour can give up: must be refused outright.
-	resizeActive(b.children[0], dirHoriz, 100, computeLayout(b, r))
+	resizeActive(b.children[0], dirHoriz, 100, computeLayout(b, r, 1))
 	after := widths(t, b, r)
 
 	eq(t, after, before, "over-large resize should be reverted")
@@ -87,12 +120,12 @@ func TestSplitCloseRoundTrip(t *testing.T) {
 	root := &node{weight: 1, pane: &pane{}}
 	r := rect{0, 0, 80, 24}
 
-	a := split(root, dirHoriz, computeLayout(root, r))
+	a := split(root, dirHoriz, computeLayout(root, r, 1))
 	if a == nil {
 		t.Fatal("first split refused")
 	}
 	a.pane = &pane{}
-	b := split(a, dirVert, computeLayout(root, r))
+	b := split(a, dirVert, computeLayout(root, r, 1))
 	if b == nil {
 		t.Fatal("second split refused")
 	}
@@ -123,7 +156,7 @@ func TestStackShowsOnlyActiveLayer(t *testing.T) {
 	b := stack(root)
 	b.pane = &pane{}
 
-	l := computeLayout(root, r)
+	l := computeLayout(root, r, 1)
 	if got := len(l.leaves); got != 1 {
 		t.Fatalf("a stack should expose one leaf at a time, got %d", got)
 	}
@@ -140,7 +173,7 @@ func TestStackShowsOnlyActiveLayer(t *testing.T) {
 	}
 
 	root.layer = 0
-	l = computeLayout(root, r)
+	l = computeLayout(root, r, 1)
 	if l.leaves[0].pane != orig {
 		t.Fatal("switching layer should change which pane is visible")
 	}
@@ -183,14 +216,14 @@ func TestStackRowsTrimsFarthestHeaderWhenTooShort(t *testing.T) {
 func TestSplitRefusedWhenTooNarrow(t *testing.T) {
 	root := &node{weight: 1, pane: &pane{}}
 	r := rect{0, 0, minCell * 2, 24} // one cell short of fitting two panes plus a gutter
-	if split(root, dirHoriz, computeLayout(root, r)) != nil {
+	if split(root, dirHoriz, computeLayout(root, r, 1)) != nil {
 		t.Fatal("split should be refused when there is no room")
 	}
 }
 
 func TestHitTesting(t *testing.T) {
 	b := tree(dirHoriz, 3)
-	l := computeLayout(b, rect{0, 0, 80, 24})
+	l := computeLayout(b, rect{0, 0, 80, 24}, 1)
 
 	second := b.children[1]
 	r := l.rects[second]
@@ -204,6 +237,27 @@ func TestHitTesting(t *testing.T) {
 	}
 	if l.paneAt(r.x-1, 5) != nil {
 		t.Fatal("a gutter column must not belong to a pane")
+	}
+}
+
+// With margin=0 the rendered gap between panes disappears entirely, but the
+// boundary must stay draggable — sepAt should still find it, landing on the
+// next child's leading border cell instead of a blank gutter cell.
+func TestSepAtHitsZeroMarginBoundary(t *testing.T) {
+	hb := tree(dirHoriz, 2)
+	hl := computeLayout(hb, rect{0, 0, 20, 10}, 0)
+	second := hb.children[1]
+	r := hl.rects[second]
+	if sp := hl.sepAt(r.x, 5); sp == nil || sp.branch != hb || sp.idx != 0 {
+		t.Fatalf("sepAt missed the zero-margin horizontal boundary: %+v", sp)
+	}
+
+	vb := tree(dirVert, 2)
+	vl := computeLayout(vb, rect{0, 0, 10, 20}, 0)
+	bottom := vb.children[1]
+	rv := vl.rects[bottom]
+	if sp := vl.sepAt(5, rv.y); sp == nil || sp.branch != vb || sp.idx != 0 {
+		t.Fatalf("sepAt missed the zero-margin vertical boundary: %+v", sp)
 	}
 }
 

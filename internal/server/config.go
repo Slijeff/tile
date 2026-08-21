@@ -27,15 +27,18 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "config.yaml"), nil
 }
 
-// config is everything yatm persists across restarts: the keymap and the
-// active colorscheme, both in one file so there's a single place to look.
+// config is everything yatm persists across restarts: the keymap, the
+// active colorscheme and the pane gutter width, all in one file so there's
+// a single place to look.
 type config struct {
 	Theme  string `yaml:"theme"`
+	Margin int    `yaml:"margin"`
 	Keymap keymap `yaml:"keymap"`
 }
 
 var defaultConfig = config{
-	Theme:  "Catppuccin Macchiato",
+	Theme:  defaultTheme.Name,
+	Margin: 1,
 	Keymap: defaultKeymap,
 }
 
@@ -100,10 +103,18 @@ func resolveTheme(name string) theme {
 			return t
 		}
 	}
-	for _, t := range catppuccinThemes {
-		if t.Name == defaultConfig.Theme {
-			return t
-		}
-	}
-	return catppuccinThemes[len(catppuccinThemes)-1]
+	return defaultTheme
+}
+
+// reloadConfig re-reads config.yaml from disk and applies it live: keymap,
+// prefix/lock bindings, theme and pane margin all take effect on the very
+// next frame, no restart required. A missing or malformed file falls back
+// to the defaults, same as startup.
+func (s *server) reloadConfig() {
+	cfg := loadConfig()
+	s.km = cfg.Keymap
+	s.prefixSpec = parseKeySpec(cfg.Keymap.Prefix)
+	s.lockSpec = parseKeySpec(cfg.Keymap.Lock)
+	s.theme = resolveTheme(cfg.Theme)
+	s.margin = max(cfg.Margin, 0)
 }

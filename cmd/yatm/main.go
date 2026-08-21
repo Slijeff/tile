@@ -11,7 +11,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"yatm/internal/client"
 	"yatm/internal/proto"
 	"yatm/internal/server"
 )
@@ -63,7 +62,7 @@ func attach() error {
 	}
 	defer conn.Close()
 
-	_, err = tea.NewProgram(client.New(conn)).Run()
+	_, err = tea.NewProgram(newClient(conn)).Run()
 	return err
 }
 
@@ -91,6 +90,9 @@ func spawnServer() error {
 	return c.Start()
 }
 
+// killServer stops the daemon and every shell in it. No prompt: the in-app
+// quit binding is the one that asks, and typing "kill-server" is already
+// saying it.
 func killServer() error {
 	sock, err := proto.SocketPath()
 	if err != nil {
@@ -101,5 +103,5 @@ func killServer() error {
 		return fmt.Errorf("no server running")
 	}
 	defer conn.Close()
-	return client.New(conn).Send(proto.ClientMsg{Type: proto.MsgKill})
+	return newClient(conn).send(proto.ClientMsg{Type: proto.MsgKill})
 }

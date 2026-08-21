@@ -2,10 +2,8 @@ package server
 
 import (
 	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // theme is the palette yatm's own chrome (tab bar, status bar, tooltip and
@@ -58,6 +56,10 @@ var catppuccinThemes = []theme{
 	},
 }
 
+// defaultTheme is what a missing or unknown theme name resolves to, and the
+// one defaultConfig writes out.
+var defaultTheme = catppuccinThemes[2] // Macchiato
+
 func themeNames(ts []theme) []string {
 	names := make([]string, len(ts))
 	for i, t := range ts {
@@ -109,67 +111,23 @@ func (s *server) pickerKey(k tea.Key) {
 // pickerBox renders the picker as a bordered floating panel, one line per
 // theme, the highlighted row shown in that theme's own accent color.
 func pickerBox(names []string, sel int, th theme) []string {
-	title := "colorscheme  (↑↓/jk preview · enter keep · esc cancel)"
-	textWidth := ansi.StringWidth(title)
-	for _, n := range names {
-		if w := ansi.StringWidth(n) + 2; w > textWidth {
-			textWidth = w
-		}
-	}
-	pad := func(s string) string {
-		if d := textWidth - ansi.StringWidth(s); d > 0 {
-			return s + strings.Repeat(" ", d)
-		}
-		return s
-	}
-	b := fg(th.Surface)
-	box := make([]string, 0, len(names)+3)
-	box = append(box, b+"┌"+strings.Repeat("─", textWidth+2)+"┐\x1b[m")
-	box = append(box, b+"│ \x1b[m"+pad("\x1b[1m"+fg(th.Text)+title+"\x1b[22m\x1b[m")+b+" │\x1b[m")
-	box = append(box, b+"│ "+pad(strings.Repeat("─", textWidth))+" │\x1b[m")
+	rows := make([]string, len(names))
 	for i, n := range names {
 		row, style := "  "+n, fg(th.Text)
 		if i == sel {
 			row, style = "› "+n, "\x1b[1m"+fg(th.Base)+bg(th.Accent)
 		}
-		box = append(box, b+"│ \x1b[m"+pad(style+row+"\x1b[m")+b+" │\x1b[m")
+		rows[i] = style + row + "\x1b[m"
 	}
-	box = append(box, b+"└"+strings.Repeat("─", textWidth+2)+"┘\x1b[m")
-	return box
+	return panel("colorscheme  (↑↓/jk preview · enter keep · esc cancel)", rows, 0, th)
 }
 
 // overlayCenter stamps box onto the middle of a w-by-h grid, the same way
 // overlay pins one to the bottom-right corner but floating instead.
 func overlayCenter(base string, w, h int, box []string) string {
-	if len(box) == 0 || len(box) > h {
+	bw := boxWidth(box)
+	if len(box) == 0 || len(box) > h || bw >= w {
 		return base
 	}
-	bw := 0
-	for _, l := range box {
-		if lw := ansi.StringWidth(l); lw > bw {
-			bw = lw
-		}
-	}
-	if bw >= w {
-		return base
-	}
-	lines := strings.Split(base, "\n")
-	top := (len(lines) - len(box)) / 2
-	left := (w - bw) / 2
-	for i, bl := range box {
-		y := top + i
-		if y < 0 || y >= len(lines) {
-			continue
-		}
-		pre := ansi.Truncate(lines[y], left, "")
-		if d := left - ansi.StringWidth(pre); d > 0 {
-			pre += strings.Repeat(" ", d)
-		}
-		trail := w - left - bw
-		if trail < 0 {
-			trail = 0
-		}
-		lines[y] = pre + "\x1b[m" + bl + "\x1b[m" + strings.Repeat(" ", trail)
-	}
-	return strings.Join(lines, "\n")
+	return overlayAt(base, w, (w-bw)/2, (h-len(box))/2, box)
 }

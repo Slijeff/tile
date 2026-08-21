@@ -21,7 +21,8 @@ func contentRect(r rect) rect {
 // every edge, with the pane's name in the top edge. A focused pane's border
 // is drawn in the theme's accent color, every other pane's in its dim
 // surface color — the clearest cue, for a stacked pane, that it's the one
-// currently on top (see collapsedHeader for the layers behind it).
+// currently on top (see collapsedHeader for the layers behind it, drawn
+// brighter so they stay legible while collapsed).
 //
 // Too small to fit a border (either edge under 3 cells), it falls back to
 // the bare, unbordered view, matching contentRect's own fallback.
@@ -76,15 +77,17 @@ func edgeLine(w int, p *pane, left, right rune) string {
 }
 
 // collapsedHeader draws a background stack layer's one-row title bar — the
-// border's top edge, dimmed, with nothing below it. It's the only trace a
-// layer leaves on screen until a click or cycleLayer brings it to the
-// front, zellij's compact stacked-panes look. below marks a layer stacked
-// after the active one, whose corners point up (toward the active pane
-// above it) rather than down.
+// border's top edge, in the theme's subtext color, with nothing below it.
+// It's the only trace a layer leaves on screen until a click or cycleLayer
+// brings it to the front, zellij's compact stacked-panes look — brighter
+// than an ordinary unfocused border's dim surface color so a collapsed
+// layer stays legible instead of blending into the background. below marks
+// a layer stacked after the active one, whose corners point up (toward the
+// active pane above it) rather than down.
 func collapsedHeader(n *node, w int, th theme, below bool) string {
 	left, right := '┌', '┐'
 	if below {
 		left, right = '└', '┘'
 	}
-	return fg(th.Surface) + edgeLine(w, firstLeaf(n).pane, left, right) + "\x1b[m"
+	return fg(th.Subtext) + edgeLine(w, firstLeaf(n).pane, left, right) + "\x1b[m"
 }

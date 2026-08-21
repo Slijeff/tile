@@ -298,3 +298,43 @@ func TestKeyRoutesThroughFullChordNotJustFirstKey(t *testing.T) {
 		t.Fatal(`"r" was sent to the shell instead of completing the pane-rename chord`)
 	}
 }
+
+// Regression: a Kitty-keyboard-protocol terminal (ghostty, kitty, wezterm)
+// reports shift+letter as the unshifted base rune in Code plus an explicit
+// ModShift, e.g. shift+r arrives as {Code: 'r', Mod: ModShift, Text: "R"}.
+// vt's key encoder predates that protocol and only recognizes Mod == 0 for
+// printable runes, so an unnormalized key silently vanishes instead of
+// reaching the shell — sendKey must fold the shift into Code first.
+func TestNormalizeShiftedKeyFoldsCaseForVT(t *testing.T) {
+	cases := []struct {
+		name string
+		in   tea.Key
+		want tea.Key
+	}{
+		{
+			name: "shift+letter becomes the shifted rune with no modifier",
+			in:   tea.Key{Code: 'r', Mod: tea.ModShift, Text: "R"},
+			want: tea.Key{Code: 'R', Mod: 0, Text: "R"},
+		},
+		{
+			name: "plain, unmodified typing is untouched",
+			in:   tea.Key{Code: 'r', Mod: 0, Text: "r"},
+			want: tea.Key{Code: 'r', Mod: 0, Text: "r"},
+		},
+		{
+			name: "ctrl combos are untouched — vt matches those by Code+Mod directly",
+			in:   tea.Key{Code: 'r', Mod: tea.ModCtrl, Text: ""},
+			want: tea.Key{Code: 'r', Mod: tea.ModCtrl, Text: ""},
+		},
+		{
+			name: "shift+non-printable (empty Text) is untouched",
+			in:   tea.Key{Code: tea.KeyTab, Mod: tea.ModShift, Text: ""},
+			want: tea.Key{Code: tea.KeyTab, Mod: tea.ModShift, Text: ""},
+		},
+	}
+	for _, c := range cases {
+		if got := normalizeShiftedKey(c.in); got != c.want {
+			t.Errorf("%s: normalizeShiftedKey(%+v) = %+v, want %+v", c.name, c.in, got, c.want)
+		}
+	}
+}

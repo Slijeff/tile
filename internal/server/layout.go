@@ -84,6 +84,18 @@ type layout struct {
 	leaves  []*node // in tree order; only the active layer of each stack
 	seps    []sep
 	headers []header
+	margin  int // blank gutter cells between siblings, from config
+}
+
+// gutter returns how many blank cells the margin should reserve along d.
+// Terminal cells are roughly twice as tall as they are wide, so a blank-row
+// gutter (top-to-bottom splits) needs half as many cells as a blank-column
+// one (side-by-side splits) to read as the same visual thickness.
+func (l *layout) gutter(d dir) int {
+	if d == dirVert {
+		return l.margin / 2
+	}
+	return l.margin
 }
 
 // sizes splits avail cells between weighted siblings. Leftover cells from the
@@ -111,8 +123,8 @@ func sizes(avail int, ws []float64) []int {
 	return out
 }
 
-func computeLayout(root *node, r rect) *layout {
-	l := &layout{rects: map[*node]rect{}}
+func computeLayout(root *node, r rect, margin int) *layout {
+	l := &layout{rects: map[*node]rect{}, margin: margin}
 	l.walk(root, r)
 	return l
 }
@@ -133,26 +145,30 @@ func (l *layout) walk(n *node, r rect) {
 	}
 	gaps := len(n.children) - 1
 	if n.dir == dirHoriz {
-		ss := sizes(r.w-gaps, ws)
+		ss := sizes(r.w-gaps*l.margin, ws)
 		x := r.x
 		for i, c := range n.children {
 			l.walk(c, rect{x, r.y, ss[i], r.h})
 			x += ss[i]
 			if i < gaps {
-				l.seps = append(l.seps, sep{n, i, rect{x, r.y, 1, r.h}})
-				x++
+				// The hit-test rect stays at least 1 cell wide even when
+				// margin is 0, so a zero-gap boundary is still draggable —
+				// it lands on the next child's leading border column.
+				l.seps = append(l.seps, sep{n, i, rect{x, r.y, max(l.margin, 1), r.h}})
+				x += l.margin
 			}
 		}
 		return
 	}
-	ss := sizes(r.h-gaps, ws)
+	gm := l.gutter(dirVert)
+	ss := sizes(r.h-gaps*gm, ws)
 	y := r.y
 	for i, c := range n.children {
 		l.walk(c, rect{r.x, y, r.w, ss[i]})
 		y += ss[i]
 		if i < gaps {
-			l.seps = append(l.seps, sep{n, i, rect{r.x, y, r.w, 1}})
-			y++
+			l.seps = append(l.seps, sep{n, i, rect{r.x, y, r.w, max(gm, 1)}})
+			y += gm
 		}
 	}
 }
@@ -257,17 +273,29 @@ func render(n *node, l *layout, active *node, th theme) string {
 		parts[i] = render(c, l, active, th)
 	}
 	if n.dir == dirVert {
-		return strings.Join(parts, "\n"+strings.Repeat(" ", r.w)+"\n")
+		gm := l.gutter(dirVert)
+		gap := strings.Repeat(" ", r.w)
+		rows := make([]string, 0, len(parts)+(len(parts)-1)*gm)
+		for i, p := range parts {
+			if i > 0 {
+				for range gm {
+					rows = append(rows, gap)
+				}
+			}
+			rows = append(rows, p)
+		}
+		return strings.Join(rows, "\n")
 	}
-	return joinH(parts, r.h)
+	return joinH(parts, r.h, l.margin)
 }
 
 // joinH glues equal-height blocks side by side across a blank gutter.
-func joinH(parts []string, h int) string {
+func joinH(parts []string, h, margin int) string {
 	cols := make([][]string, len(parts))
 	for i, p := range parts {
 		cols[i] = strings.Split(p, "\n")
 	}
+	gap := strings.Repeat(" ", margin)
 	var b strings.Builder
 	for y := range h {
 		if y > 0 {
@@ -275,7 +303,7 @@ func joinH(parts []string, h int) string {
 		}
 		for i, c := range cols {
 			if i > 0 {
-				b.WriteByte(' ')
+				b.WriteString(gap)
 			}
 			if y < len(c) {
 				b.WriteString(c[y])
@@ -310,7 +338,7 @@ func fit(s string, w, h int) string {
 // runs that way, otherwise the leaf becomes a branch of two. Returns the new
 // leaf, or nil when there is no room for one.
 func split(leaf *node, d dir, l *layout) *node {
-	if l.rects[leaf].axis(d) < minCell*2+1 {
+	if l.rects[leaf].axis(d) < minCell*2+l.gutter(d) {
 		return nil
 	}
 	n := &node{weight: 1}
@@ -413,11 +441,11 @@ func resizeActive(active *node, d dir, delta int, l *layout) {
 	if j < 0 {
 		return
 	}
-	resizeChildren(b, i, j, delta, l.rects[b].axis(d))
+	resizeChildren(b, i, j, delta, l.rects[b].axis(d), l.gutter(d))
 }
 
-func resizeChildren(b *node, i, j, delta, extent int) {
-	avail := extent - (len(b.children) - 1)
+func resizeChildren(b *node, i, j, delta, extent, margin int) {
+	avail := extent - (len(b.children)-1)*margin
 	if avail <= 0 || delta == 0 {
 		return
 	}

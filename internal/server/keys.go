@@ -25,7 +25,9 @@ type keymap struct {
 	SplitVert  string      `yaml:"split_vert"`  // top to bottom
 	Stack      string      `yaml:"stack"`       // layer a new pane behind the active one
 	Zoom       string      `yaml:"zoom"`        // grow the active pane to fill the window
+	Float      string      `yaml:"float"`       // toggle the centered floating terminal
 	Theme      string      `yaml:"theme"`       // opens the colorscheme picker
+	Reload     string      `yaml:"reload"`      // re-reads config.yaml from disk
 	Detach     string      `yaml:"detach"`
 	Quit       string      `yaml:"quit"`
 	Windows    windowLayer `yaml:"windows"` // sub-layer: press Key, then New, Kill or Rename
@@ -42,13 +44,14 @@ type windowLayer struct {
 	Rename string `yaml:"rename"` // rename the active window
 }
 
-// paneLayer is the "p" sub-layer: press Key to open it, then Kill or
-// Rename to act on the active pane. A blank Kill/Rename leaves that action
+// paneLayer is the "p" sub-layer: press Key to open it, then Kill, Rename,
+// or Picker to act on panes. A blank Kill/Rename/Picker leaves that action
 // out of the layer entirely, rather than collapsing to Key alone.
 type paneLayer struct {
 	Key    string `yaml:"key"`    // leader that opens the layer, e.g. "p"
 	Kill   string `yaml:"kill"`   // kill the active pane
 	Rename string `yaml:"rename"` // rename the active pane
+	Picker string `yaml:"picker"` // opens the floating pane picker
 }
 
 var defaultKeymap = keymap{
@@ -62,16 +65,19 @@ var defaultKeymap = keymap{
 	SplitVert:  "-",
 	Stack:      "s",
 	Zoom:       "z",
+	Float:      "f",
 	Theme:      "T",
+	Reload:     "R",
 	Detach:     "d",
 	Quit:       "q",
 	Windows:    windowLayer{Key: "w", New: "c", Kill: "&", Rename: "r"},
-	Panes:      paneLayer{Key: "p", Kill: "x", Rename: "r"},
+	Panes:      paneLayer{Key: "p", Kill: "x", Rename: "r", Picker: "p"},
 }
 
 // helpEntry pairs one remappable action's label with its currently bound
-// key or chord — the shared source for keymap.bindings(), the full prefix
-// tooltip, and the which-key box shown while a chord is in progress.
+// key or chord — the shared source for the chord dispatcher in command.go,
+// the full prefix tooltip, and the which-key box shown while a chord is in
+// progress.
 type helpEntry struct{ key, desc string }
 
 // actionEntries lists every remappable action once, sub-layer actions keyed
@@ -89,37 +95,25 @@ func actionEntries(km keymap) []helpEntry {
 		{km.SplitVert, "split top-to-bottom"},
 		{km.Stack, "stack a pane"},
 		{km.Zoom, "zoom the active pane"},
+		{km.Float, "toggle floating terminal"},
 		{km.Theme, "colorscheme picker"},
+		{km.Reload, "reload config"},
 		{km.Detach, "detach"},
 		{km.Quit, "quit"},
 	}
-	if km.Windows.New != "" {
-		entries = append(entries, helpEntry{km.Windows.Key + km.Windows.New, "new window"})
-	}
-	if km.Windows.Kill != "" {
-		entries = append(entries, helpEntry{km.Windows.Key + km.Windows.Kill, "kill window"})
-	}
-	if km.Windows.Rename != "" {
-		entries = append(entries, helpEntry{km.Windows.Key + km.Windows.Rename, "rename window"})
-	}
-	if km.Panes.Kill != "" {
-		entries = append(entries, helpEntry{km.Panes.Key + km.Panes.Kill, "kill pane"})
-	}
-	if km.Panes.Rename != "" {
-		entries = append(entries, helpEntry{km.Panes.Key + km.Panes.Rename, "rename pane"})
+	for _, sub := range []struct{ leader, leaf, desc string }{
+		{km.Windows.Key, km.Windows.New, "new window"},
+		{km.Windows.Key, km.Windows.Kill, "kill window"},
+		{km.Windows.Key, km.Windows.Rename, "rename window"},
+		{km.Panes.Key, km.Panes.Kill, "kill pane"},
+		{km.Panes.Key, km.Panes.Rename, "rename pane"},
+		{km.Panes.Key, km.Panes.Picker, "pane picker"},
+	} {
+		if sub.leaf != "" {
+			entries = append(entries, helpEntry{sub.leader + sub.leaf, sub.desc})
+		}
 	}
 	return entries
-}
-
-// bindings lists every configured key or chord, for the chord dispatcher in
-// command.go to check a keystroke against.
-func (km keymap) bindings() []string {
-	entries := actionEntries(km)
-	specs := make([]string, len(entries))
-	for i, e := range entries {
-		specs[i] = e.key
-	}
-	return specs
 }
 
 // keySpec matches a tea.Key by code and modifier, for the two bindings

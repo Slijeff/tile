@@ -53,12 +53,19 @@ type window struct {
 	active *node
 	l      *layout // geometry from the last frame; mouse and resize read it
 	zoomed bool    // active pane fills the window, hiding the rest of the tree
+
+	// The floating terminal, laid out over the tiled tree rather than in
+	// it — see float.go. float is nil until one is opened and again once
+	// its last layer dies; while floatOn it is what owns input.
+	float   *node
+	floatOn bool    // shown, and holding focus
+	fl      *layout // floating geometry from the last frame; mouse reads it
 }
 
 // displayName returns what the window's tab should show: a manual rename
 // if it has one, otherwise the active pane's own title — the same source
-// tabLine used before window rename existed — falling back to the
-// window's stored name if it has no active pane.
+// tabLine used before window rename existed. w.name only ever holds a
+// manual rename, so there is nothing else to fall back to.
 func (w *window) displayName() string {
 	if w.named {
 		return w.name
@@ -66,7 +73,7 @@ func (w *window) displayName() string {
 	if w.active != nil && w.active.pane != nil {
 		return w.active.pane.title
 	}
-	return w.name
+	return ""
 }
 
 // rename sets the window's manual tab name. A blank name clears the
@@ -103,10 +110,14 @@ type server struct {
 	prefixSpec keySpec
 	lockSpec   keySpec
 
-	theme   theme    // current colorscheme, used for all chrome rendering
-	themes  []theme  // colorschemes offered by the picker
-	picker  *picker  // open colorscheme picker, nil when closed
-	renamer *renamer // open pane/window rename prompt, nil when closed
+	theme   theme       // current colorscheme, used for all chrome rendering
+	margin  int         // blank gutter cells between panes, from config
+	themes  []theme     // colorschemes offered by the picker
+	picker  *picker     // open colorscheme picker, nil when closed
+	renamer *renamer    // open pane/window rename prompt, nil when closed
+	panes   *panePicker // open floating pane picker, nil when closed
+
+	quitting bool // the quit confirmation is up, waiting on a y
 
 	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
 }
@@ -123,6 +134,7 @@ func RunServer() error {
 		return err
 	}
 	cfg := loadConfig()
+	margin := max(cfg.Margin, 0)
 	s := &server{
 		sock:       sock,
 		ln:         ln,
@@ -134,6 +146,7 @@ func RunServer() error {
 		lockSpec:   parseKeySpec(cfg.Keymap.Lock),
 		theme:      resolveTheme(cfg.Theme),
 		themes:     catppuccinThemes,
+		margin:     margin,
 	}
 	if err := s.newWindow(); err != nil {
 		return err
@@ -272,25 +285,27 @@ func (s *server) tabBar() string {
 // layoutNow returns fresh geometry, for the paths that run between frames.
 func (s *server) layoutNow() *layout {
 	w := s.win()
-	w.l = computeLayout(w.root, s.body())
+	w.l = computeLayout(w.root, s.body(), s.margin)
 	return w.l
 }
 
 func (s *server) activePane() *pane {
-	w := s.win()
-	if w.active == nil {
+	n := s.win().focus()
+	if n == nil {
 		return nil
 	}
-	return w.active.pane
+	return n.pane
 }
 
 // frame lays the window out, syncs pane sizes to it, and renders. Zoomed,
 // the active pane is resized and drawn to fill the whole body instead of its
 // tree rect; every other pane keeps its normal size, unresized and hidden,
-// so unzooming needs no restore step.
+// so unzooming needs no restore step. The floating terminal, if it is up, is
+// laid out and stamped over the finished tiled body last, so it covers
+// whatever it overlaps.
 func (s *server) frame() proto.ServerMsg {
 	w := s.win()
-	l := computeLayout(w.root, s.body())
+	l := computeLayout(w.root, s.body(), s.margin)
 	w.l = l
 	bd := s.body()
 	for _, leaf := range l.leaves {
@@ -301,17 +316,41 @@ func (s *server) frame() proto.ServerMsg {
 		cr := contentRect(r)
 		leaf.pane.resize(cr.w, cr.h)
 	}
+	// While the float is up it owns focus, so no tiled pane draws itself as
+	// the focused one — two accent borders would be a lie about where the
+	// next keystroke lands.
+	tiledActive := w.active
+	if w.floatOn {
+		tiledActive = nil
+	}
 	var body string
 	activeRect, hasActive := l.rects[w.active]
 	if w.zoomed && w.active != nil && w.active.pane != nil {
-		body = borderPane(w.active.pane, bd, true, s.theme)
+		body = borderPane(w.active.pane, bd, tiledActive != nil, s.theme)
 		activeRect, hasActive = bd, true
 	} else {
-		body = render(w.root, l, w.active, s.theme)
+		body = render(w.root, l, tiledActive, s.theme)
+	}
+	if w.floatOn && w.float != nil {
+		fl, fr := s.floatGeom(), floatRect(bd)
+		for _, leaf := range fl.leaves {
+			cr := contentRect(fl.rects[leaf])
+			leaf.pane.resize(cr.w, cr.h)
+		}
+		fa := w.focus()
+		body = overlayAt(body, bd.w, fr.x-bd.x, fr.y-bd.y,
+			strings.Split(render(w.float, fl, fa, s.theme), "\n"))
+		if r, ok := fl.rects[fa]; ok {
+			activeRect, hasActive = r, true
+		}
 	}
 	switch {
+	case s.quitting:
+		body = overlayCenter(body, bd.w, bd.h, quitBox(s.theme))
 	case s.picker != nil:
 		body = overlayCenter(body, bd.w, bd.h, pickerBox(themeNames(s.themes), s.picker.sel, s.theme))
+	case s.panes != nil:
+		body = overlayCenter(body, bd.w, bd.h, panePickerBox(s.panes, s.theme, bd.w, bd.h))
 	case s.renamer != nil:
 		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.renamer.forWindow, s.theme))
 	case s.chord != "":
@@ -320,10 +359,10 @@ func (s *server) frame() proto.ServerMsg {
 		body = overlay(body, bd.w, bd.h, helpBox(s.km, s.theme))
 	}
 	m := proto.ServerMsg{Type: proto.MsgFrame, Content: s.tabBar() + "\n" + body + "\n" + s.statusBar()}
-	if hasActive && w.active.pane != nil {
-		c := w.active.pane.emu.CursorPosition()
+	if focus := w.focus(); hasActive && focus != nil && focus.pane != nil {
+		c := focus.pane.emu.CursorPosition()
 		cr := contentRect(activeRect)
-		m.CurX, m.CurY, m.CurVis = cr.x+c.X, cr.y+c.Y, w.active.pane.curVis
+		m.CurX, m.CurY, m.CurVis = cr.x+c.X, cr.y+c.Y, focus.pane.curVis
 	}
 	return m
 }
@@ -341,13 +380,17 @@ func (s *server) statusBar() string {
 	left := " " + mode + " "
 
 	var right string
-	if w := s.win(); w.active != nil {
-		if p := w.active.stackAncestor(); p != nil {
+	w := s.win()
+	if f := w.focus(); f != nil {
+		if p := f.stackAncestor(); p != nil {
 			right += fmt.Sprintf("layer %d/%d  ", p.activeLayer()+1, len(p.children))
 		}
-		if w.zoomed {
-			right += "zoom  "
-		}
+	}
+	if w.floatOn {
+		right += "float  "
+	}
+	if w.zoomed {
+		right += "zoom  "
 	}
 	right += fmt.Sprintf("window %d/%d ", s.cur+1, len(s.windows))
 
@@ -375,15 +418,19 @@ func (s *server) newWindow() error {
 	}
 	s.nextID++
 	root := &node{pane: p, weight: 1}
-	s.windows = append(s.windows, &window{name: p.title, root: root, active: root})
+	s.windows = append(s.windows, &window{root: root, active: root})
 	s.cur = len(s.windows) - 1
 	s.dirty = true
 	return nil
 }
 
-// paneExited tears down a dead pane and heals the tree around it.
+// paneExited tears down a dead pane and heals the tree around it — the
+// floating tree first, since a floating pane is not in w.root at all.
 func (s *server) paneExited(p *pane) {
 	for wi, w := range s.windows {
+		if s.floatExited(w, p) {
+			return
+		}
 		for _, leaf := range leaves(w.root) {
 			if leaf.pane != p {
 				continue
@@ -408,7 +455,7 @@ func (s *server) closeWindow(i int) {
 	if i < 0 || i >= len(s.windows) {
 		return
 	}
-	for _, leaf := range leaves(s.windows[i].root) {
+	for _, leaf := range s.windows[i].panes() {
 		leaf.pane.close()
 	}
 	s.windows = append(s.windows[:i:i], s.windows[i+1:]...)
@@ -428,7 +475,7 @@ func (s *server) shutdown() {
 	}
 	s.done = true
 	for _, w := range s.windows {
-		for _, leaf := range leaves(w.root) {
+		for _, leaf := range w.panes() {
 			leaf.pane.close()
 		}
 	}

@@ -16,10 +16,18 @@ import (
 func (s *server) key(k tea.Key) {
 	s.dirty = true
 
-	// The picker and rename prompt are modal: every key steers them until
-	// they close.
+	// The quit confirmation, the pickers and the rename prompt are modal:
+	// every key steers them until they close.
+	if s.quitting {
+		s.quitKey(k)
+		return
+	}
 	if s.picker != nil {
 		s.pickerKey(k)
+		return
+	}
+	if s.panes != nil {
+		s.panesKey(k)
 		return
 	}
 	if s.renamer != nil {
@@ -56,8 +64,28 @@ func (s *server) sendKey(k tea.Key) {
 	if p := s.activePane(); p != nil {
 		p.scroll = 0
 		p.trackCommand(k)
-		p.emu.SendKey(vt.KeyPressEvent(uv.Key(k)))
+		p.emu.SendKey(vt.KeyPressEvent(uv.Key(normalizeShiftedKey(k))))
 	}
+}
+
+// normalizeShiftedKey folds a shift-only printable keystroke's case into
+// Code and drops the modifier, so vt's key encoder — which predates the
+// Kitty keyboard protocol and only recognizes Mod == 0 for printable runes
+// (see its own FIXME) — doesn't silently swallow it. Terminals that speak
+// that protocol (ghostty, kitty, wezterm, …) report shift+r as Code: 'r',
+// Mod: ModShift, Text: "R": the unshifted base key plus an explicit shift
+// bit, rather than the legacy behavior of just sending Code: 'R', Mod: 0.
+// Text always carries the actually-produced character, shifted or not, so
+// it's the source of truth here. Ctrl/Alt combos are untouched — those
+// aren't printable text (Text is empty) and vt already matches them by
+// Code+Mod.
+func normalizeShiftedKey(k tea.Key) tea.Key {
+	if k.Mod == tea.ModShift && k.Text != "" {
+		if r := []rune(k.Text); len(r) == 1 {
+			k.Code, k.Mod = r[0], 0
+		}
+	}
+	return k
 }
 
 // command runs one prefixed keystroke. A key that leads a layered binding
@@ -80,8 +108,15 @@ func (s *server) command(k tea.Key) {
 		return
 	}
 
-	// Arrows move between panes; with a modifier they move the border instead.
+	// Arrows move between panes; with a modifier they move the border
+	// instead. The floating tree is never split, so it has neither a
+	// spatial neighbour to reach nor a border to push: an arrow there
+	// always means "flip to the next layer".
 	if d, fwd, ok := arrow(k.Code); ok {
+		if w.floatOn {
+			s.cycleLayer(fwd)
+			return
+		}
 		step := 0
 		switch {
 		case k.Mod&tea.ModCtrl != 0:
@@ -141,8 +176,8 @@ func (s *server) match(seq string, w *window, l *layout) {
 // keymap bound one), meaning the next keystroke should extend the chord
 // rather than cancel it.
 func (km keymap) leads(seq string) bool {
-	for _, spec := range km.bindings() {
-		if len(spec) > len(seq) && strings.HasPrefix(spec, seq) {
+	for _, e := range actionEntries(km) {
+		if len(e.key) > len(seq) && strings.HasPrefix(e.key, seq) {
 			return true
 		}
 	}
@@ -158,9 +193,15 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 	case s.km.PrevWindow:
 		s.cur = (s.cur - 1 + len(s.windows)) % len(s.windows)
 	case s.km.CyclePane:
-		w.active = nextLeaf(l, w.active)
+		if w.floatOn {
+			s.cycleLayer(true) // the float's layers are all there is to cycle
+		} else {
+			w.active = nextLeaf(l, w.active)
+		}
 	case s.km.NewPane:
 		s.addPane()
+	case s.km.Float:
+		s.toggleFloat()
 	case s.km.SplitHoriz:
 		s.split(dirHoriz)
 	case s.km.SplitVert:
@@ -181,12 +222,16 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 		}
 	case s.km.Panes.Key + s.km.Panes.Rename:
 		s.openRenamer()
+	case s.km.Panes.Key + s.km.Panes.Picker:
+		s.openPanePicker()
 	case s.km.Theme:
 		s.openPicker()
+	case s.km.Reload:
+		s.reloadConfig()
 	case s.km.Detach:
 		s.detach()
 	case s.km.Quit:
-		s.shutdown()
+		s.confirmQuit()
 	default:
 		return false
 	}
@@ -207,9 +252,14 @@ func arrow(c rune) (d dir, forward, ok bool) {
 	return dirNone, false, false
 }
 
-// split adds a pane beside the active one and starts a shell in it.
+// split adds a pane beside the active one and starts a shell in it. Refused
+// while the float owns focus: a floating terminal is one rect, never
+// subdivided — stack another layer onto it instead.
 func (s *server) split(d dir) {
 	w := s.win()
+	if w.floatOn {
+		return
+	}
 	if w.l == nil {
 		s.layoutNow()
 	}
@@ -232,34 +282,41 @@ func (s *server) split(d dir) {
 	s.layoutNow()
 }
 
-// stack adds a pane layered behind the active one, sharing its rect rather
-// than splitting it, and starts a shell in it.
+// stack adds a pane layered behind the focused one, sharing its rect rather
+// than splitting it, and starts a shell in it. It is the one way a floating
+// terminal is allowed to grow, since a stack shares its parent's rect
+// instead of carving it up.
 func (s *server) stack() {
 	w := s.win()
-	if w.l == nil {
-		s.layoutNow()
+	relayout := s.layoutNow
+	if w.floatOn {
+		relayout = s.floatGeom
 	}
-	n := stack(w.active)
-	l := s.layoutNow()
+	n := stack(w.focus())
+	l := relayout()
 	r := l.rects[n]
 	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events)
 	if err != nil {
 		closeNode(n)
-		s.layoutNow()
+		relayout()
 		return
 	}
 	s.nextID++
 	n.pane = p
-	w.active = n
-	s.layoutNow()
+	w.setFocus(n)
+	relayout()
 }
 
 // cycleLayer switches to the next (forward) or previous pane stacked behind
-// the active one, like flipping between layers in an image editor. No-op if
-// the active pane is not part of a stack.
+// the focused one, like flipping between layers in an image editor. No-op if
+// the focused pane is not part of a stack.
 func (s *server) cycleLayer(forward bool) {
 	w := s.win()
-	p := w.active.stackAncestor()
+	f := w.focus()
+	if f == nil {
+		return
+	}
+	p := f.stackAncestor()
 	if p == nil {
 		return
 	}
@@ -269,18 +326,19 @@ func (s *server) cycleLayer(forward bool) {
 	} else {
 		p.layer = (p.activeLayer() - 1 + n) % n
 	}
-	w.active = firstLeaf(p.children[p.layer])
+	w.setFocus(firstLeaf(p.children[p.layer]))
 	s.dirty = true
 }
 
 // focusLayer makes n's own leaf — or, if n is itself a branch, its first
-// leaf — the window's active pane, and, when n sits inside a stack, brings
-// that layer to the front so render, the status bar and the next click or
-// cycle all agree on which one that is. Used for a plain click and for
-// clicking a collapsed stack layer's header to bring it forward.
+// leaf — the active pane of whichever tree currently owns focus, and, when n
+// sits inside a stack, brings that layer to the front so render, the status
+// bar and the next click or cycle all agree on which one that is. Used for a
+// plain click and for clicking a collapsed stack layer's header to bring it
+// forward, in the tiled tree or the floating one.
 func (s *server) focusLayer(n *node) {
 	w := s.win()
-	w.active = firstLeaf(n)
+	w.setFocus(firstLeaf(n))
 	p := n.stackAncestor()
 	if p == nil {
 		return
@@ -311,9 +369,13 @@ func (s *server) addPane() {
 // still lives at its normal place in the tree — only rendering and pane
 // sizing treat it specially — so unzooming needs no restore step, and
 // switching w.active while zoomed (arrows, cycle-pane, …) just changes
-// which pane fills the window.
+// which pane fills the window. Refused while the float owns focus: zoom is a
+// trick played on the tiled layout, and the float already has its own rect.
 func (s *server) toggleZoom() {
 	w := s.win()
+	if w.floatOn {
+		return
+	}
 	w.zoomed = !w.zoomed
 	s.dirty = true
 }
@@ -349,7 +411,7 @@ func (s *server) mouse(m proto.ClientMsg) {
 		switch m.Kind {
 		case proto.MouseMotion:
 			resizeChildren(s.drag.branch, s.drag.idx, s.drag.idx+1,
-				pos-s.dragPos, l.rects[s.drag.branch].axis(d))
+				pos-s.dragPos, l.rects[s.drag.branch].axis(d), l.gutter(d))
 			s.dragPos = pos
 		case proto.MouseRelease:
 			s.drag = nil
@@ -368,6 +430,18 @@ func (s *server) mouse(m proto.ClientMsg) {
 				}
 			}
 		}
+		return
+	}
+
+	// The float is up: it owns the mouse. Hit-test its own geometry, and
+	// swallow anything landing outside it rather than letting a click
+	// through to the tiled panes it is covering.
+	if w.floatOn {
+		fl := w.fl
+		if fl == nil {
+			fl = s.floatGeom()
+		}
+		s.paneMouse(m, fl)
 		return
 	}
 
@@ -396,6 +470,19 @@ func (s *server) mouse(m proto.ClientMsg) {
 		return
 	}
 
+	s.paneMouse(m, l)
+}
+
+// paneMouse routes one event through a tree's geometry: a click on a
+// collapsed stack layer's header brings it forward, one on a gutter starts a
+// resize drag, one on a pane focuses it, and a wheel scrolls it — unless the
+// program inside asked for mouse reporting, in which case the event is
+// forwarded with pane-relative coordinates. A coordinate the tree doesn't
+// cover is dropped, which is what keeps a click outside the floating
+// terminal from reaching the tiled panes underneath it. The floating tree is
+// never split, so it simply has no gutters for the drag branch to find.
+func (s *server) paneMouse(m proto.ClientMsg, l *layout) {
+	mo := m.Mouse
 	if m.Kind == proto.MouseClick {
 		if h := l.headerAt(mo.X, mo.Y); h != nil {
 			s.focusLayer(h) // clicking a collapsed stack layer's header brings it forward

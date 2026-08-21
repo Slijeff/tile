@@ -19,11 +19,13 @@ func helpEntries(km keymap) []helpEntry {
 		{km.SplitVert, "split top-to-bottom"},
 		{km.Stack, "stack a pane"},
 		{km.Zoom, "zoom the active pane"},
+		{km.Float, "toggle floating terminal"},
 		{km.CyclePane, "cycle panes"},
 		{"←↑↓→", "move focus (cycles layer at a dead end)"},
 		{km.Windows.Key, "windows…"},
 		{km.Panes.Key, "panes…"},
 		{km.Theme, "colorscheme picker"},
+		{km.Reload, "reload config"},
 		{km.Detach, "detach"},
 		{km.Quit, "quit"},
 	}
@@ -58,69 +60,100 @@ func chordBox(chord string, km keymap, th theme) []string {
 	return entriesBox("» "+km.Prefix+" "+chord, chordEntries(km, chord), th)
 }
 
-// entriesBox is the shared renderer behind helpBox and chordBox: a bordered
-// box with a title row and one "key → desc" row per entry, every line the
-// same visible width.
+// entriesBox is the shared renderer behind helpBox and chordBox: one
+// "key → desc" row per entry, the keys padded into a column.
 func entriesBox(title string, entries []helpEntry, th theme) []string {
-	keyWidth, textWidth := 0, ansi.StringWidth(title)
+	keyWidth := 0
 	for _, e := range entries {
 		if w := len([]rune(e.key)); w > keyWidth {
 			keyWidth = w
 		}
 	}
-	for _, e := range entries {
-		if w := keyWidth + 4 + ansi.StringWidth(e.desc); w > textWidth {
-			textWidth = w
-		}
+	rows := make([]string, len(entries))
+	for i, e := range entries {
+		rows[i] = fmt.Sprintf("%s%-*s\x1b[m → %s", fg(th.Accent), keyWidth, e.key, e.desc)
 	}
+	return panel(title, rows, 0, th)
+}
 
-	pad := func(s string) string {
-		if d := textWidth - ansi.StringWidth(s); d > 0 {
-			return s + strings.Repeat(" ", d)
-		}
-		return s
+// panel frames pre-styled rows as one of yatm's overlay boxes: a border, a
+// bold title, a rule, then one line per row, each padded — or truncated — to
+// the same visible width, at least minWidth wide. Uniform width is load
+// bearing: a row wider than the rest desyncs the box from what overlay and
+// overlayCenter measure, and they drop the whole thing rather than place it.
+func panel(title string, rows []string, minWidth int, th theme) []string {
+	w := max(ansi.StringWidth(title), minWidth)
+	for _, r := range rows {
+		w = max(w, ansi.StringWidth(r))
 	}
 
 	b := fg(th.Surface)
-	box := make([]string, 0, len(entries)+3)
-	box = append(box, b+"┌"+strings.Repeat("─", textWidth+2)+"┐\x1b[m")
-	box = append(box, b+"│ \x1b[m"+pad("\x1b[1m"+fg(th.Text)+title+"\x1b[22m\x1b[m")+b+" │\x1b[m")
-	box = append(box, b+"│ "+pad(strings.Repeat("─", textWidth))+" │\x1b[m")
-	for _, e := range entries {
-		row := fmt.Sprintf("%s%-*s\x1b[m → %s", fg(th.Accent), keyWidth, e.key, e.desc)
-		box = append(box, b+"│ \x1b[m"+pad(row)+b+" │\x1b[m")
+	box := make([]string, 0, len(rows)+4)
+	box = append(box, b+"┌"+strings.Repeat("─", w+2)+"┐\x1b[m")
+	box = append(box, b+"│ \x1b[m"+padTo("\x1b[1m"+fg(th.Text)+title+"\x1b[22m\x1b[m", w)+b+" │\x1b[m")
+	box = append(box, b+"│ "+strings.Repeat("─", w)+" │\x1b[m")
+	for _, r := range rows {
+		box = append(box, b+"│ \x1b[m"+padTo(r, w)+b+" │\x1b[m")
 	}
-	box = append(box, b+"└"+strings.Repeat("─", textWidth+2)+"┘\x1b[m")
+	box = append(box, b+"└"+strings.Repeat("─", w+2)+"┘\x1b[m")
 	return box
+}
+
+// padTo pads s out with spaces, or truncates it, to exactly w visible cells.
+// Rows have to measure the same or the box they sit in loses its shape.
+func padTo(s string, w int) string {
+	switch d := w - ansi.StringWidth(s); {
+	case d > 0:
+		return s + strings.Repeat(" ", d)
+	case d < 0:
+		return ansi.Truncate(s, w, "") + "\x1b[m"
+	}
+	return s
 }
 
 // overlay stamps box onto the bottom-right corner of a w-by-h grid of
 // already-fit lines (see fit), the way render composes pane content.
 func overlay(base string, w, h int, box []string) string {
-	if len(box) == 0 || len(box) > h {
+	bw := boxWidth(box)
+	if len(box) == 0 || len(box) > h || bw >= w {
 		return base
 	}
-	bw := 0
-	for _, l := range box {
-		if lw := ansi.StringWidth(l); lw > bw {
-			bw = lw
-		}
-	}
-	if bw >= w {
+	return overlayAt(base, w, w-bw, h-len(box), box)
+}
+
+// overlayAt stamps box onto a w-cell-wide grid of already-fit lines with its
+// top-left corner at (x, y), padding the row up to x and back out to w so
+// the line keeps its exact width. Rows past the bottom of the grid are
+// dropped; a box too wide to fit at that column is refused outright. Shared
+// by overlay's corner tooltips, overlayCenter's modal panels and the
+// floating terminal, which places itself at an explicit rect.
+func overlayAt(base string, w, x, y int, box []string) string {
+	bw := boxWidth(box)
+	if bw == 0 || x < 0 || x+bw > w {
 		return base
 	}
 	lines := strings.Split(base, "\n")
-	top := len(lines) - len(box)
 	for i, bl := range box {
-		y := top + i
-		if y < 0 || y >= len(lines) {
+		row := y + i
+		if row < 0 || row >= len(lines) {
 			continue
 		}
-		left := ansi.Truncate(lines[y], w-bw, "")
-		if d := (w - bw) - ansi.StringWidth(left); d > 0 {
-			left += strings.Repeat(" ", d)
+		pre := ansi.Truncate(lines[row], x, "")
+		if d := x - ansi.StringWidth(pre); d > 0 {
+			pre += strings.Repeat(" ", d)
 		}
-		lines[y] = left + "\x1b[m" + bl
+		lines[row] = pre + "\x1b[m" + bl + "\x1b[m" + strings.Repeat(" ", w-x-bw)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// boxWidth is the widest visible line in box.
+func boxWidth(box []string) int {
+	w := 0
+	for _, l := range box {
+		if lw := ansi.StringWidth(l); lw > w {
+			w = lw
+		}
+	}
+	return w
 }

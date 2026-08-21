@@ -1,10 +1,7 @@
 package server
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // renamer is the rename prompt's open state: a single-line text buffer the
@@ -63,33 +60,10 @@ func (s *server) renamerKey(k tea.Key) {
 // like the picker and help overlays: a title row and one editable line with
 // a trailing cursor.
 func renameBox(text string, forWindow bool, th theme) []string {
-	const minWidth = 24
 	title := "rename pane  (enter confirm · esc cancel)"
 	if forWindow {
 		title = "rename window  (enter confirm · esc cancel)"
 	}
-	input := text + "▏"
-
-	textWidth := ansi.StringWidth(title)
-	if w := ansi.StringWidth(input); w > textWidth {
-		textWidth = w
-	}
-	if textWidth < minWidth {
-		textWidth = minWidth
-	}
-	pad := func(s string) string {
-		if d := textWidth - ansi.StringWidth(s); d > 0 {
-			return s + strings.Repeat(" ", d)
-		}
-		return s
-	}
-
-	b := fg(th.Surface)
-	box := make([]string, 0, 5)
-	box = append(box, b+"┌"+strings.Repeat("─", textWidth+2)+"┐\x1b[m")
-	box = append(box, b+"│ \x1b[m"+pad("\x1b[1m"+fg(th.Text)+title+"\x1b[22m\x1b[m")+b+" │\x1b[m")
-	box = append(box, b+"│ "+pad(strings.Repeat("─", textWidth))+" │\x1b[m")
-	box = append(box, b+"│ \x1b[m"+pad(fg(th.Text)+input+"\x1b[m")+b+" │\x1b[m")
-	box = append(box, b+"└"+strings.Repeat("─", textWidth+2)+"┘\x1b[m")
-	return box
+	input := fg(th.Text) + text + "▏\x1b[m"
+	return panel(title, []string{input}, 24, th)
 }
