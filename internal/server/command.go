@@ -34,6 +34,14 @@ func (s *server) key(k tea.Key) {
 		s.renamerKey(k)
 		return
 	}
+	if s.presetPrompt != nil {
+		s.presetPromptKey(k)
+		return
+	}
+	if s.presetList != nil {
+		s.presetListKey(k)
+		return
+	}
 
 	// Lock is never forwarded; it is the way back out of lock mode.
 	if s.lockSpec.matches(k) {
@@ -224,6 +232,10 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 		s.openRenamer()
 	case s.km.Panes.Key + s.km.Panes.Picker:
 		s.openPanePicker()
+	case s.km.Preset:
+		s.openPresetPrompt()
+	case s.km.LoadPreset:
+		s.openPresetList()
 	case s.km.Theme:
 		s.openPicker()
 	case s.km.Reload:

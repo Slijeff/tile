@@ -15,23 +15,26 @@ import (
 // end, the 0-9 window selectors, and pressing the prefix twice to send it
 // through are structural and not remapped here.
 type keymap struct {
-	Prefix     string      `yaml:"prefix"` // enters command mode
-	Lock       string      `yaml:"lock"`   // toggles lock mode, prefix or not
-	NextWindow string      `yaml:"next_window"`
-	PrevWindow string      `yaml:"prev_window"`
-	CyclePane  string      `yaml:"cycle_pane"`  // move to the next pane in tree order
-	NewPane    string      `yaml:"new_pane"`    // split along whichever axis has more room
-	SplitHoriz string      `yaml:"split_horiz"` // side by side
-	SplitVert  string      `yaml:"split_vert"`  // top to bottom
-	Stack      string      `yaml:"stack"`       // layer a new pane behind the active one
-	Zoom       string      `yaml:"zoom"`        // grow the active pane to fill the window
-	Float      string      `yaml:"float"`       // toggle the centered floating terminal
-	Theme      string      `yaml:"theme"`       // opens the colorscheme picker
-	Reload     string      `yaml:"reload"`      // re-reads config.yaml from disk
-	Detach     string      `yaml:"detach"`
-	Quit       string      `yaml:"quit"`
-	Windows    windowLayer `yaml:"windows"` // sub-layer: press Key, then New, Kill or Rename
-	Panes      paneLayer   `yaml:"panes"`   // sub-layer: press Key, then Kill or Rename
+	Prefix       string      `yaml:"prefix"` // enters command mode
+	Lock         string      `yaml:"lock"`   // toggles lock mode, prefix or not
+	NextWindow   string      `yaml:"next_window"`
+	PrevWindow   string      `yaml:"prev_window"`
+	CyclePane    string      `yaml:"cycle_pane"`    // move to the next pane in tree order
+	NewPane      string      `yaml:"new_pane"`      // split along whichever axis has more room
+	SplitHoriz   string      `yaml:"split_horiz"`   // side by side
+	SplitVert    string      `yaml:"split_vert"`    // top to bottom
+	Stack        string      `yaml:"stack"`         // layer a new pane behind the active one
+	Zoom         string      `yaml:"zoom"`          // grow the active pane to fill the window
+	Float        string      `yaml:"float"`         // toggle the centered floating terminal
+	Preset       string      `yaml:"preset"`        // save the current layout as a named preset
+	LoadPreset   string      `yaml:"load_preset"`   // opens the preset picker to restore a saved layout
+	DeletePreset string      `yaml:"delete_preset"` // inside the preset picker, deletes the highlighted preset
+	Theme        string      `yaml:"theme"`         // opens the colorscheme picker
+	Reload       string      `yaml:"reload"`        // re-reads config.yaml from disk
+	Detach       string      `yaml:"detach"`
+	Quit         string      `yaml:"quit"`
+	Windows      windowLayer `yaml:"windows"` // sub-layer: press Key, then New, Kill or Rename
+	Panes        paneLayer   `yaml:"panes"`   // sub-layer: press Key, then Kill or Rename
 }
 
 // windowLayer is the "w" sub-layer: press Key to open it, then New, Kill,
@@ -55,23 +58,26 @@ type paneLayer struct {
 }
 
 var defaultKeymap = keymap{
-	Prefix:     "ctrl+b",
-	Lock:       "f12",
-	NextWindow: "]",
-	PrevWindow: "[",
-	CyclePane:  "o",
-	NewPane:    "a",
-	SplitHoriz: "|",
-	SplitVert:  "-",
-	Stack:      "s",
-	Zoom:       "z",
-	Float:      "f",
-	Theme:      "T",
-	Reload:     "R",
-	Detach:     "d",
-	Quit:       "q",
-	Windows:    windowLayer{Key: "w", New: "c", Kill: "&", Rename: "r"},
-	Panes:      paneLayer{Key: "p", Kill: "x", Rename: "r", Picker: "p"},
+	Prefix:       "ctrl+b",
+	Lock:         "f12",
+	NextWindow:   "]",
+	PrevWindow:   "[",
+	CyclePane:    "o",
+	NewPane:      "a",
+	SplitHoriz:   "|",
+	SplitVert:    "-",
+	Stack:        "s",
+	Zoom:         "z",
+	Float:        "f",
+	Preset:       "S",
+	LoadPreset:   "L",
+	DeletePreset: "x",
+	Theme:        "T",
+	Reload:       "R",
+	Detach:       "d",
+	Quit:         "q",
+	Windows:      windowLayer{Key: "w", New: "c", Kill: "&", Rename: "r"},
+	Panes:        paneLayer{Key: "p", Kill: "x", Rename: "r", Picker: "p"},
 }
 
 // helpEntry pairs one remappable action's label with its currently bound
@@ -96,6 +102,8 @@ func actionEntries(km keymap) []helpEntry {
 		{km.Stack, "stack a pane"},
 		{km.Zoom, "zoom the active pane"},
 		{km.Float, "toggle floating terminal"},
+		{km.Preset, "save preset"},
+		{km.LoadPreset, "load preset"},
 		{km.Theme, "colorscheme picker"},
 		{km.Reload, "reload config"},
 		{km.Detach, "detach"},

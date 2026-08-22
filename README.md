@@ -36,6 +36,8 @@ The prefix is **Ctrl+B**. Press it, then:
 | `p` `x` | kill the active pane |
 | `p` `r` | rename the active pane |
 | `p` `p` | open the floating pane picker |
+| `S` | save the current layout to a named preset |
+| `L` | load a saved preset |
 | `T` | open the colorscheme picker |
 | `R` | reload config.yaml (keymap, theme, margin) |
 | `d` | detach, leaving everything running |
@@ -146,6 +148,27 @@ draws for itself — and the preview column updates to match. `Enter`
 switches to the highlighted pane, jumping windows if it's in a different
 one; `Esc`/`q` cancels back to whatever was focused before you opened it.
 
+### Presets
+
+`S` saves the current arrangement of windows, panes and their layout as a
+named preset: a prompt opens over the layout the same way `p` `r`/`w` `r`'s
+rename prompt does — type a name and `Enter` confirms it, `Esc` cancels
+without saving anything. Saving under a name that's already used overwrites
+that preset instead of creating a duplicate. A preset remembers each
+window's split/stack tree and relative pane sizes, plus any manual window
+or pane names set with `w` `r` / `p` `r`; it does not remember what was
+running in a pane, so loading one always starts fresh shells.
+
+`L` opens a picker listing every saved preset — `↑`/`↓` (or `j`/`k`) move
+the highlight, `Enter` restores the highlighted one, `Esc`/`q` cancels.
+Restoring a preset adds its windows after whatever is already open rather
+than replacing it, so loading one never throws away work in progress. `x`
+deletes the highlighted preset from disk instead — with a confirmation
+nowhere in sight, so double-check the highlight before pressing it; deleting
+the last one closes the picker rather than leaving it open on an empty list.
+Presets are stored in `~/.config/yatm/presets.yaml`, alongside
+`config.yaml`.
+
 ### Quitting
 
 `q` is the only key that ends more than it starts: it stops the daemon, and
@@ -195,6 +218,9 @@ keymap:
   stack: s
   zoom: z
   float: f
+  preset: S
+  load_preset: L
+  delete_preset: x
   theme: T
   reload: R
   detach: d

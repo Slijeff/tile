@@ -117,6 +117,9 @@ type server struct {
 	renamer *renamer    // open pane/window rename prompt, nil when closed
 	panes   *panePicker // open floating pane picker, nil when closed
 
+	presetPrompt *presetPrompt // open save-preset name prompt, nil when closed
+	presetList   *presetList   // open load-preset picker, nil when closed
+
 	quitting bool // the quit confirmation is up, waiting on a y
 
 	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
@@ -353,6 +356,10 @@ func (s *server) frame() proto.ServerMsg {
 		body = overlayCenter(body, bd.w, bd.h, panePickerBox(s.panes, s.theme, bd.w, bd.h))
 	case s.renamer != nil:
 		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.renamer.forWindow, s.theme))
+	case s.presetPrompt != nil:
+		body = overlayCenter(body, bd.w, bd.h, presetPromptBox(s.presetPrompt.text, s.theme))
+	case s.presetList != nil:
+		body = overlayCenter(body, bd.w, bd.h, presetListBox(s.presetList, s.km, s.theme))
 	case s.chord != "":
 		body = overlay(body, bd.w, bd.h, chordBox(s.chord, s.km, s.theme))
 	case s.prefix:

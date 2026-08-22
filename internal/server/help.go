@@ -24,6 +24,8 @@ func helpEntries(km keymap) []helpEntry {
 		{"←↑↓→", "move focus (cycles layer at a dead end)"},
 		{km.Windows.Key, "windows…"},
 		{km.Panes.Key, "panes…"},
+		{km.Preset, "save preset"},
+		{km.LoadPreset, "load preset"},
 		{km.Theme, "colorscheme picker"},
 		{km.Reload, "reload config"},
 		{km.Detach, "detach"},
