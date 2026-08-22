@@ -515,10 +515,11 @@ func (s *server) paneMouse(m proto.ClientMsg, l *layout) {
 	if leaf == nil || leaf.pane == nil {
 		return
 	}
+	if m.Kind == proto.MouseClick {
+		s.focusLayer(leaf) // a click always moves focus, even into a mouse-aware program
+	}
 	if !leaf.pane.mouseOn {
 		switch m.Kind {
-		case proto.MouseClick:
-			s.focusLayer(leaf) // plain shell: a click just moves focus
 		case proto.MouseWheel:
 			switch mo.Button {
 			case tea.MouseWheelUp:

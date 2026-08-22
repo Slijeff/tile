@@ -249,3 +249,40 @@ func TestClickHeaderFocusesStackLayer(t *testing.T) {
 		t.Fatalf("clicking a header should update the stack's own layer index, got %d, want 0", got)
 	}
 }
+
+// A click into a pane must move focus even when the program running inside
+// it has enabled mouse reporting (e.g. vim, less, htop) — the click should
+// both focus the pane and be forwarded to the program.
+func TestClickFocusesMouseAwarePane(t *testing.T) {
+	events := make(chan event, 256)
+	left, err := newPane(0, 10, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer left.close()
+
+	root := &node{pane: left, weight: 1}
+	l := computeLayout(root, rect{0, 0, 40, 20}, 1)
+	right := split(root, dirHoriz, l)
+	if right == nil {
+		t.Fatal("split should have room in a 40-wide rect")
+	}
+	leftLeaf := root.children[0] // split converts root in place; the original pane moved here
+	rp, err := newPane(1, 10, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rp.close()
+	right.pane = rp
+	right.pane.mouseOn = true // the program inside asked for mouse reporting
+
+	win := &window{name: "0", root: root, active: leftLeaf}
+	s := &server{windows: []*window{win}, w: 40, h: 22} // body: 40x20
+	s.frame()                                           // establishes w.l
+
+	// This coordinate lands inside the right (mouse-aware) pane's rect.
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseClick, Mouse: tea.Mouse{X: 35, Y: 5}})
+	if s.win().active != right {
+		t.Fatalf("a click into a mouse-aware pane should still move focus, got %p, want %p", s.win().active, right)
+	}
+}
