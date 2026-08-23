@@ -19,8 +19,7 @@ import (
 const (
 	evOutput = iota // a pane produced output
 	evExit          // a pane's shell died
-	evClient        // a message from the attached client
-	evAttach        // a client connected
+	evClient        // a message from a connected client
 	evGone          // a client's connection dropped
 	evSignal        // SIGTERM/SIGINT
 )
@@ -47,6 +46,10 @@ func (c *client) send(m proto.ServerMsg) {
 }
 
 type window struct {
+	// id addresses the window from the CLI. It comes from the same counter as
+	// pane ids, so no window and pane ever share a number, and unlike the
+	// window's index it does not shift when an earlier window closes.
+	id     int
 	name   string
 	named  bool // name was set by a manual rename, overriding the active pane's title
 	root   *node
@@ -150,6 +153,9 @@ func RunServer() error {
 		theme:      resolveTheme(cfg.Theme),
 		themes:     catppuccinThemes,
 		margin:     margin,
+		// Ids start at 1 so that 0 always means "no id": the CLI's JSON omits
+		// a zero id, which is how a branch node is told from a pane.
+		nextID: 1,
 	}
 	if err := s.newWindow(); err != nil {
 		return err
@@ -190,8 +196,10 @@ func (c *client) write() {
 	}
 }
 
+// read pumps one connection's messages onto the event loop. Connecting does
+// not attach: a client that wants the frames says so with MsgAttach, so a
+// one-shot CLI command on the same socket leaves the attached session alone.
 func (s *server) read(c *client) {
-	s.events <- event{kind: evAttach, cli: c}
 	dec := json.NewDecoder(c.conn)
 	for {
 		var m proto.ClientMsg
@@ -235,27 +243,29 @@ func (s *server) handle(e event) {
 		s.dirty = true
 	case evExit:
 		s.paneExited(e.pane)
-	case evAttach:
-		if s.cli != nil && s.cli != e.cli {
-			// ponytail: one client at a time, so there is no smallest-size
-			// negotiation. Mirroring needs a per-client layout and frame.
-			s.cli.send(proto.ServerMsg{Type: proto.MsgDetach})
-		}
-		s.cli = e.cli
-		s.dirty = true
 	case evGone:
 		if s.cli == e.cli {
 			s.cli = nil
 		}
 	case evClient:
-		s.client(e.msg)
+		s.client(e.cli, e.msg)
 	case evSignal:
 		s.shutdown()
 	}
 }
 
-func (s *server) client(m proto.ClientMsg) {
+func (s *server) client(c *client, m proto.ClientMsg) {
 	switch m.Type {
+	case proto.MsgAttach:
+		if s.cli != nil && s.cli != c {
+			// ponytail: one client at a time, so there is no smallest-size
+			// negotiation. Mirroring needs a per-client layout and frame.
+			s.cli.send(proto.ServerMsg{Type: proto.MsgDetach})
+		}
+		s.cli = c
+		s.dirty = true
+	case proto.MsgCmd:
+		s.cliCmd(c, m)
 	case proto.MsgResize:
 		if m.W > 0 && m.H > 0 {
 			s.w, s.h = m.W, m.H
@@ -425,7 +435,8 @@ func (s *server) newWindow() error {
 	}
 	s.nextID++
 	root := &node{pane: p, weight: 1}
-	s.windows = append(s.windows, &window{root: root, active: root})
+	s.windows = append(s.windows, &window{id: s.nextID, root: root, active: root})
+	s.nextID++
 	s.cur = len(s.windows) - 1
 	s.dirty = true
 	return nil

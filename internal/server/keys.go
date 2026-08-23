@@ -149,8 +149,19 @@ loop:
 			break loop
 		}
 	}
-	if strings.EqualFold(s, "f12") {
-		return keySpec{code: tea.KeyF12, mod: mod}
+	// Named keys, for the ones that have no single printable rune. The CLI's
+	// send-keys --key leans on these; config.yaml gets them too.
+	for name, code := range map[string]rune{
+		"f12":    tea.KeyF12,
+		"enter":  tea.KeyEnter,
+		"escape": tea.KeyEscape,
+		"esc":    tea.KeyEscape,
+		"tab":    tea.KeyTab,
+		"space":  tea.KeySpace,
+	} {
+		if strings.EqualFold(s, name) {
+			return keySpec{code: code, mod: mod}
+		}
 	}
 	r := []rune(s)
 	if len(r) == 1 {

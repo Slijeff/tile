@@ -70,10 +70,16 @@ func (s *server) key(k tea.Key) {
 // jumps the pane back to live output, like any other terminal.
 func (s *server) sendKey(k tea.Key) {
 	if p := s.activePane(); p != nil {
-		p.scroll = 0
-		p.trackCommand(k)
-		p.emu.SendKey(vt.KeyPressEvent(uv.Key(normalizeShiftedKey(k))))
+		sendKeyTo(p, k)
 	}
+}
+
+// sendKeyTo is sendKey aimed at a named pane rather than the focused one, so
+// the CLI can type into a pane without stealing focus to do it.
+func sendKeyTo(p *pane, k tea.Key) {
+	p.scroll = 0
+	p.trackCommand(k)
+	p.emu.SendKey(vt.KeyPressEvent(uv.Key(normalizeShiftedKey(k))))
 }
 
 // normalizeShiftedKey folds a shift-only printable keystroke's case into

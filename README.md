@@ -15,6 +15,11 @@ devbox run start        # or: devbox run build && ./yatm
 |---|---|
 | `yatm` / `yatm attach` | attach, spawning the daemon if needed |
 | `yatm kill-server` | stop the daemon and every shell in it |
+| `yatm help` | the full command list, no daemon required |
+
+There is also a [scripting interface](#scripting) for driving a session from
+outside it — enumerating panes, reading what they printed, and typing into
+them — which is how a script or an AI agent works with yatm.
 
 ## Keys
 
@@ -246,6 +251,120 @@ the one-character actions reached after pressing it (`new`, `kill`,
 `rename` for windows; `kill`, `rename`, `picker` for panes) — leave any of
 them blank to drop that action from the layer. Press `reload` (`R` by
 default) after editing to apply changes live, no restart needed.
+
+## Scripting
+
+Every command below acts on a running session over the same socket the TUI
+uses, and answers on stdout. None of them attach, so they can run while you
+are using the session and will not detach you — that is what makes them safe
+to hand to a script or an AI agent.
+
+Panes are addressed as `%<id>`, windows as `@<id>`, both printed by
+`yatm list`. Ids come from one counter, so a pane and a window never share a
+number, and unlike a position in the tab bar an id does not shift when
+something before it closes.
+
+```
+yatm list [--json]               every window and pane
+yatm capture   %p [--lines N]    a pane's text, no escape codes
+yatm send-keys %p [--key SPEC] [--enter] [text...]
+yatm split     %p [-h|-v]        split a pane, prints the new pane's id
+yatm stack     %p                layer a pane behind it, prints its id
+yatm new-window                  prints the new window's id
+yatm kill-pane   %p
+yatm kill-window @w
+yatm focus       %p
+yatm rename  %p|@w [name]        blank name reverts to the shell's title
+```
+
+Anything that fails exits non-zero with the reason on stderr.
+
+### Looking at a session
+
+```console
+$ yatm list
+* @2    1: zsh
+  %1      ├─ go test ./...
+  %3      └─ tail -f server.log   <- focused
+```
+
+`--json` gives the same tree with geometry and focus, for a program to read:
+
+```console
+$ yatm list --json
+[
+  {
+    "id": 2,
+    "index": 1,
+    "name": "zsh",
+    "active": true,
+    "root": {
+      "dir": "horiz",
+      "w": 80, "h": 22,
+      "children": [
+        { "id": 1, "title": "zsh", "name": "go test ./...", "w": 40, "h": 22 },
+        { "id": 3, "title": "zsh", "w": 40, "h": 22, "focused": true }
+      ]
+    }
+  }
+]
+```
+
+A node with children is a split or a stack and has a `dir`; a node with an
+`id` is a pane. A window also carries `float` when it has a floating
+terminal, and `zoomed` when one of its panes is zoomed.
+
+### Driving a pane
+
+`send-keys` types into the pane you name without going through the prefix
+key, so the session's mode — prefix pending, locked, a picker open — never
+changes what a script sends. Text is passed as arguments; `--enter` appends
+a newline, and `--key` sends a single named or modified key.
+
+```sh
+yatm send-keys %1 --enter 'go test ./...'
+yatm send-keys %1 --key ctrl+c            # interrupt it
+yatm send-keys %1 --key escape
+yatm send-keys %1 -- '-n leading dashes'  # -- ends flag parsing
+```
+
+Typing a command this way also names the pane after it, exactly as if you
+had typed it yourself.
+
+### Reading it back
+
+`capture` returns the pane's text with the styling stripped and the blank
+rows below the cursor dropped, so `--lines 20` means the last twenty lines
+that have something on them. `--lines 0` returns the whole scrollback.
+
+```console
+$ yatm capture %1 --lines 3
+ok      yatm/internal/server    0.51s
+❯
+```
+
+A terminal pane is a screen, not a stream of command results: nothing marks
+where one command's output ends. So there is no "run and wait" — send the
+keys, then poll `capture` until what comes back looks finished.
+
+```sh
+yatm send-keys %1 --enter 'go test ./...'
+sleep 2
+yatm capture %1 --lines 30
+```
+
+### Rearranging
+
+Splitting, stacking and killing act at the pane you name and leave focus
+where pressing the equivalent key would — `split` focuses the pane it just
+made, `kill-pane` focuses the survivor. `yatm focus` moves it back.
+
+```sh
+new=$(yatm split %1 -v)     # prints e.g. %7
+yatm send-keys "$new" --enter 'tail -f server.log'
+yatm rename "$new" logs
+yatm focus %1               # hand focus back
+```
 
 ## Mouse
 

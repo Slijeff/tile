@@ -100,7 +100,8 @@ func (s *server) applyPreset(pr preset) {
 	for _, pw := range pr.Windows {
 		var pending []pendingLeaf
 		root := buildNode(pw.Root, nil, &pending)
-		w := &window{root: root}
+		w := &window{id: s.nextID, root: root}
+		s.nextID++
 		s.windows = append(s.windows, w)
 		s.cur = len(s.windows) - 1
 

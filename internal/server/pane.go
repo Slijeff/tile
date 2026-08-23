@@ -208,6 +208,53 @@ func (p *pane) view() string {
 	return lines.Render()
 }
 
+// capture returns the pane's last n lines of text, for the CLI to hand an
+// agent. Unlike view it ignores p.scroll — a capture asks "what has this pane
+// printed", not "what is the user looking at" — and it strips the styling,
+// which is noise to a reader that isn't a terminal. n <= 0 means everything.
+//
+// The blank rows below the cursor are dropped before n is applied: a caller
+// asking for the last 20 lines means the last 20 lines with something on
+// them, not the bottom 20 rows of a mostly empty screen.
+func (p *pane) capture(n int) string {
+	var text string
+	if p.emu.IsAltScreen() {
+		// A full-screen program (vim, less) redraws its own viewport, and the
+		// scrollback holds whatever scrolled past before it started — not what
+		// it is showing. The screen is the whole truth here.
+		text = ansi.Strip(p.emu.Render())
+	} else {
+		sbLen := p.emu.ScrollbackLen()
+		lines := make(uv.Lines, sbLen+p.h)
+		for i := range lines {
+			if i < sbLen {
+				lines[i] = p.emu.Scrollback().Line(i)
+				continue
+			}
+			line := uv.NewLine(p.w)
+			for x := range p.w {
+				line.Set(x, p.emu.CellAt(x, i-sbLen))
+			}
+			lines[i] = line
+		}
+		text = ansi.Strip(lines.Render())
+	}
+
+	rows := strings.Split(text, "\n")
+	// Every row is padded out to the pane width; that padding is noise to a
+	// reader that isn't drawing a terminal.
+	for i, r := range rows {
+		rows[i] = strings.TrimRight(r, " ")
+	}
+	for len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	if n > 0 && n < len(rows) {
+		rows = rows[len(rows)-n:]
+	}
+	return strings.Join(rows, "\n")
+}
+
 func (p *pane) resize(w, h int) {
 	if w < 1 || h < 1 || (w == p.w && h == p.h) {
 		return
