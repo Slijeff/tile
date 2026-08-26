@@ -62,6 +62,8 @@ func (s *server) dispatch(cmd string, a args) (string, error) {
 		return "", s.cliFocus(a)
 	case "resize":
 		return "", s.cliResize(a)
+	case "even":
+		return "", s.cliEven(a)
 	case "rename":
 		return "", s.cliRename(a)
 	}
@@ -326,6 +328,50 @@ func (s *server) cliKillWindow(a args) error {
 	s.closeWindow(i)
 	s.dirty = true
 	return nil
+}
+
+// cliEven gives sibling panes an equal share. split does not do this on its
+// own: splitting a pane that already has a sibling halves that pane's share,
+// so two splits leave 50/25/25 rather than thirds.
+//
+// A pane target evens the branch that pane sits in; a window target evens
+// every branch in the window.
+func (s *server) cliEven(a args) error {
+	sigil, id, err := parseTarget(a.arg(0))
+	if err != nil {
+		return err
+	}
+	var w *window
+	if sigil == '@' {
+		if _, w = s.findWindow(id); w == nil {
+			return fmt.Errorf("no window @%d", id)
+		}
+		evenNode(w.root, true)
+	} else {
+		var n *node
+		if w, n = s.findPane(id); n == nil {
+			return fmt.Errorf("no pane %%%d", id)
+		}
+		if n.parent == nil {
+			return nil // the window's only pane: already even
+		}
+		evenNode(n.parent, false)
+	}
+	w.l = computeLayout(w.root, s.body(), s.margin)
+	s.dirty = true
+	return nil
+}
+
+// evenNode gives n's children an equal share of it, recursing when deep.
+// Stacked children share one rect whatever their weights, so evening a stack
+// changes nothing — which is the right answer for one.
+func evenNode(n *node, deep bool) {
+	for _, c := range n.children {
+		c.weight = 1
+		if deep {
+			evenNode(c, true)
+		}
+	}
 }
 
 // cliResize moves the border between a pane and its neighbour, in cells.

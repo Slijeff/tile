@@ -64,6 +64,7 @@ by "yatm list":
   yatm kill-window @w
   yatm focus       %p
   yatm resize      %p <left|right|up|down> <cells>
+  yatm even    %p|@w               equal shares: the pane's branch, or a whole window
   yatm rename  %p|@w [name]        blank name reverts to the shell's title
 `
 

@@ -355,3 +355,96 @@ func TestKillPaneCollapsesTheTree(t *testing.T) {
 		t.Fatal("the surviving pane %1 is gone")
 	}
 }
+
+// paneWidths reports the current width of every pane in the first window,
+// left to right.
+func paneWidths(t *testing.T, s *server) []int {
+	t.Helper()
+	w := s.windows[0]
+	l := computeLayout(w.root, s.body(), s.margin)
+	var out []int
+	for _, leaf := range leaves(w.root) {
+		out = append(out, l.rects[leaf].w)
+	}
+	return out
+}
+
+func spread(ns []int) int {
+	lo, hi := ns[0], ns[0]
+	for _, n := range ns {
+		lo, hi = min(lo, n), max(hi, n)
+	}
+	return hi - lo
+}
+
+// Two splits leave 50/25/25, because splitting a pane that already has a
+// sibling halves that pane's share. even is the way back to thirds.
+func TestEvenEqualisesSiblingPanes(t *testing.T) {
+	s := newCLITestServer(t)
+	mid, err := s.dispatch("split", parseArgs([]string{"%1", "-h"}))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if _, err := s.dispatch("split", parseArgs([]string{mid, "-h"})); err != nil {
+		t.Fatalf("split: %v", err)
+	}
+
+	before := paneWidths(t, s)
+	if len(before) != 3 {
+		t.Fatalf("got %d panes, want 3", len(before))
+	}
+	if spread(before) <= 1 {
+		t.Fatalf("widths %v are already even; the test is not exercising anything", before)
+	}
+
+	if _, err := s.dispatch("even", parseArgs([]string{"%1"})); err != nil {
+		t.Fatalf("even: %v", err)
+	}
+	after := paneWidths(t, s)
+	if spread(after) > 1 {
+		t.Errorf("widths %v after even, want them within 1 of each other (was %v)", after, before)
+	}
+}
+
+// A window target evens every branch, not just one level.
+func TestEvenWindowRecursesIntoNestedSplits(t *testing.T) {
+	s := newCLITestServer(t)
+	right, err := s.dispatch("split", parseArgs([]string{"%1", "-h"}))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	// A nested split down the right-hand column, then skew it.
+	if _, err := s.dispatch("split", parseArgs([]string{right, "-v"})); err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if _, err := s.dispatch("resize", parseArgs([]string{right, "down", "4"})); err != nil {
+		t.Fatalf("resize: %v", err)
+	}
+
+	if _, err := s.dispatch("even", parseArgs([]string{"@2"})); err != nil {
+		t.Fatalf("even @2: %v", err)
+	}
+	w := s.windows[0]
+	var check func(*node)
+	check = func(n *node) {
+		for _, c := range n.children {
+			if c.weight != 1 {
+				t.Errorf("node weight = %v after evening the window, want 1", c.weight)
+			}
+			check(c)
+		}
+	}
+	check(w.root)
+}
+
+// Evening a window that holds a single pane is a no-op, not an error: the
+// postcondition (siblings share equally) already holds.
+func TestEvenLonePaneIsANoOp(t *testing.T) {
+	s := newCLITestServer(t)
+	if _, err := s.dispatch("even", parseArgs([]string{"%1"})); err != nil {
+		t.Fatalf("even on a lone pane: %v", err)
+	}
+	if _, err := s.dispatch("even", parseArgs([]string{"%999"})); err == nil {
+		t.Error("even on an unknown pane must still be an error")
+	}
+}

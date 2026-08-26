@@ -274,6 +274,8 @@ yatm new-window                  prints the new window's id
 yatm kill-pane   %p
 yatm kill-window @w
 yatm focus       %p
+yatm resize      %p <left|right|up|down> <cells>
+yatm even    %p|@w               equal shares: the pane's branch, or a window
 yatm rename  %p|@w [name]        blank name reverts to the shell's title
 ```
 
@@ -365,6 +367,27 @@ yatm send-keys "$new" --enter 'tail -f server.log'
 yatm rename "$new" logs
 yatm focus %1               # hand focus back
 ```
+
+Splitting does not divide evenly. A split halves the share of the pane it
+splits, so splitting the same pane twice leaves 50/25/25 rather than thirds.
+`even` is the way back: given a pane it evens that pane's branch, given a
+window it evens every branch in it.
+
+```console
+$ yatm split %1 -h; yatm split %3 -h     # 50/25/25
+$ yatm even %1                           # 34/33/33
+```
+
+`resize` moves one border, in cells, and leaves focus alone. It works in
+weights underneath, so a step is approximate at small sizes — for equal
+shares reach for `even` rather than resizing your way there.
+
+```sh
+yatm resize %5 down 2       # grow %5 downward, taking from the pane below
+```
+
+Sizes are relative, so a layout built at one terminal size holds its
+proportions at any other.
 
 ## Mouse
 
