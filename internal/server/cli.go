@@ -7,7 +7,7 @@ package server
 // method the equivalent keystroke would have called.
 //
 // Focus follows the operation: splitting a pane focuses the new one, killing
-// it focuses the survivor, exactly as pressing the key would. "yatm focus"
+// it focuses the survivor, exactly as pressing the key would. "tile focus"
 // is how a caller moves it back.
 
 import (
@@ -18,7 +18,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"yatm/internal/proto"
+	"tile/internal/proto"
 )
 
 // cliCmd runs one CLI command and answers it. Every path replies exactly
@@ -142,7 +142,7 @@ func (a args) arg(i int) string {
 // be a coin flip between two different objects.
 func parseTarget(s string) (sigil byte, id int, err error) {
 	if len(s) < 2 || (s[0] != '%' && s[0] != '@') {
-		return 0, 0, fmt.Errorf("bad target %q: want %%<pane-id> or @<window-id>, as printed by \"yatm list\"", s)
+		return 0, 0, fmt.Errorf("bad target %q: want %%<pane-id> or @<window-id>, as printed by \"tile list\"", s)
 	}
 	id, convErr := strconv.Atoi(s[1:])
 	if convErr != nil {

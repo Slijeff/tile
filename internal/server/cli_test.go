@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"yatm/internal/proto"
+	"tile/internal/proto"
 )
 
 // testPane starts a real pane, the way every other test here does — a live

@@ -6,9 +6,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// theme is the palette yatm's own chrome (tab bar, status bar, tooltip and
+// theme is the palette tile's own chrome (tab bar, status bar, tooltip and
 // picker overlays) draws with. Pane content keeps whatever colors the
-// program running inside it produces; theme only skins yatm itself.
+// program running inside it produces; theme only skins tile itself.
 type theme struct {
 	Name string
 

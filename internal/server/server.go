@@ -12,7 +12,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"yatm/internal/proto"
+	"tile/internal/proto"
 )
 
 // Event kinds arriving on the server's single event channel.
@@ -93,7 +93,7 @@ func (w *window) rename(name string) {
 // server owns every pane, tree and mode flag. All of it is touched from the
 // event loop goroutine only, which is why none of it is locked.
 type server struct {
-	name     string // session name, shown in the status bar and used by "yatm ls"
+	name     string // session name, shown in the status bar and used by "tile ls"
 	sock     string
 	ln       net.Listener
 	events   chan event
@@ -132,7 +132,7 @@ type server struct {
 	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
 }
 
-// RunServer runs the yatm daemon: one event loop owning every window, pane
+// RunServer runs the tile daemon: one event loop owning every window, pane
 // and mode flag for one named session, until its last window closes or it is
 // told to shut down. An empty name means the default session.
 func RunServer(name string) error {

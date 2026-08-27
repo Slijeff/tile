@@ -3,9 +3,9 @@
   "packages": ["go@latest"],
   "shell": {
     "scripts": {
-      "build": "go build -o yatm ./cmd/yatm",
+      "build": "go build -o tile ./cmd/tile",
       "test":  "go test ./...",
-      "start": "go run ./cmd/yatm"
+      "start": "go run ./cmd/tile"
     }
   }
 }

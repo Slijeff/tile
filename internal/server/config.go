@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// configDir is where yatm keeps its config: always ~/.config/yatm, on every
+// configDir is where tile keeps its config: always ~/.config/tile, on every
 // OS, rather than os.UserConfigDir's platform default (e.g. ~/Library/
 // Application Support on macOS).
 func configDir() (string, error) {
@@ -15,7 +15,7 @@ func configDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "yatm"), nil
+	return filepath.Join(home, ".config", "tile"), nil
 }
 
 // configPath returns where the config file lives, creating no directories.
@@ -27,7 +27,7 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "config.yaml"), nil
 }
 
-// config is everything yatm persists across restarts: the keymap, the
+// config is everything tile persists across restarts: the keymap, the
 // active colorscheme and the pane gutter width, all in one file so there's
 // a single place to look.
 type config struct {

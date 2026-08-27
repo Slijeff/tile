@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"yatm/internal/proto"
+	"tile/internal/proto"
 )
 
 // floatServer builds a one-window, one-tiled-pane server sized so the body

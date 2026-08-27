@@ -7,7 +7,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 
-	"yatm/internal/proto"
+	"tile/internal/proto"
 )
 
 // key routes a keystroke: lock toggle first, then the prefix state machine

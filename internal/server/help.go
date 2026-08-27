@@ -89,7 +89,7 @@ func entriesBox(title string, entries []helpEntry, th theme) []string {
 	return panel(title, rows, 0, th)
 }
 
-// panel frames pre-styled rows as one of yatm's overlay boxes: a border, a
+// panel frames pre-styled rows as one of tile's overlay boxes: a border, a
 // bold title, a rule, then one line per row, each padded — or truncated — to
 // the same visible width, at least minWidth wide. Uniform width is load
 // bearing: a row wider than the rest desyncs the box from what overlay and

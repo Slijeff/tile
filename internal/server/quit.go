@@ -31,7 +31,7 @@ func (s *server) quitKey(k tea.Key) {
 // quitBox renders the confirmation as a bordered floating panel, styled like
 // the which-key tooltip and the other overlays.
 func quitBox(th theme) []string {
-	return entriesBox("quit yatm?", []helpEntry{
+	return entriesBox("quit tile?", []helpEntry{
 		{"y", "stop the daemon and every shell in it"},
 		{"esc", "cancel (or any other key)"},
 	}, th)

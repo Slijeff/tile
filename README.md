@@ -1,4 +1,4 @@
-# yatm — yet another terminal multiplexer
+# tile — a terminal multiplexer
 
 A small tmux-like multiplexer: windows, splittable panes, a detachable daemon,
 mouse support, and a lock mode for when a nested program wants the prefix key.
@@ -6,25 +6,25 @@ mouse support, and a lock mode for when a nested program wants the prefix key.
 ## Running
 
 ```sh
-devbox run start        # or: devbox run build && ./yatm
+devbox run start        # or: devbox run build && ./tile
 ```
 
-`yatm` attaches to the running session, starting the daemon if there isn't one.
+`tile` attaches to the running session, starting the daemon if there isn't one.
 
 | Command | What it does |
 |---|---|
-| `yatm` / `yatm attach` | attach, spawning the daemon if needed |
-| `yatm kill-server` | stop the daemon and every shell in it |
-| `yatm ls` | list running sessions |
-| `yatm help` | the full command list, no daemon required |
+| `tile` / `tile attach` | attach, spawning the daemon if needed |
+| `tile kill-server` | stop the daemon and every shell in it |
+| `tile ls` | list running sessions |
+| `tile help` | the full command list, no daemon required |
 
 Every command takes `-t name` to act on a session other than the default —
-`yatm -t work` attaches to (or starts) a session named "work", independent of
+`tile -t work` attaches to (or starts) a session named "work", independent of
 any other session's windows and panes.
 
 There is also a [scripting interface](#scripting) for driving a session from
 outside it — enumerating panes, reading what they printed, and typing into
-them — which is how a script or an AI agent works with yatm.
+them — which is how a script or an AI agent works with tile.
 
 ## Keys
 
@@ -59,8 +59,8 @@ corner listing every binding, read live from `config.yaml`.
 
 **F12** toggles lock mode at any time, with or without the prefix. While locked
 every key — the prefix included — goes straight through to the program in the
-pane, so a nested yatm, tmux, or anything else bound to Ctrl+B keeps
-working. F12 is the only key yatm never forwards.
+pane, so a nested tile, tmux, or anything else bound to Ctrl+B keeps
+working. F12 is the only key tile never forwards.
 
 `w` and `p` are sub-layers: press either and the which-key tooltip switches
 to a second list — `w` opens `c` new, `&` kill, `r` rename for windows; `p`
@@ -176,7 +176,7 @@ than replacing it, so loading one never throws away work in progress. `x`
 deletes the highlighted preset from disk instead — with a confirmation
 nowhere in sight, so double-check the highlight before pressing it; deleting
 the last one closes the picker rather than leaving it open on an empty list.
-Presets are stored in `~/.config/yatm/presets.yaml`, alongside
+Presets are stored in `~/.config/tile/presets.yaml`, alongside
 `config.yaml`.
 
 ### Quitting
@@ -188,7 +188,7 @@ So it asks first, in a box over the layout — `y` goes through with it,
 session nor leave you stuck in front of the dialog. `d` (detach) is the one
 you want if you'd rather leave everything running.
 
-`yatm kill-server` does the same thing from outside, without asking: the
+`tile kill-server` does the same thing from outside, without asking: the
 dialog guards the keystroke you can hit by accident, and spelling out
 `kill-server` at a shell already says it. It reports "no server running"
 rather than pretending it did something.
@@ -204,12 +204,12 @@ before you opened the picker.
 
 Only the four [Catppuccin](https://catppuccin.com) flavors — Latte, Frappé,
 Macchiato, Mocha — ship today. Pane content is untouched either way; the
-picker only skins yatm's own chrome.
+picker only skins tile's own chrome.
 
 ## Configuration
 
 Theme, keymap and the pane margin are all read from
-`~/.config/yatm/config.yaml` (same path on macOS and Linux). The daemon
+`~/.config/tile/config.yaml` (same path on macOS and Linux). The daemon
 writes out the full default file the first time it starts, so every setting
 is listed explicitly and ready to edit:
 
@@ -265,23 +265,23 @@ are using the session and will not detach you — that is what makes them safe
 to hand to a script or an AI agent.
 
 Panes are addressed as `%<id>`, windows as `@<id>`, both printed by
-`yatm list`. Ids come from one counter, so a pane and a window never share a
+`tile list`. Ids come from one counter, so a pane and a window never share a
 number, and unlike a position in the tab bar an id does not shift when
 something before it closes.
 
 ```
-yatm list [--json]               every window and pane
-yatm capture   %p [--lines N]    a pane's text, no escape codes
-yatm send-keys %p [--key SPEC] [--enter] [text...]
-yatm split     %p [-h|-v]        split a pane, prints the new pane's id
-yatm stack     %p                layer a pane behind it, prints its id
-yatm new-window                  prints the new window's id
-yatm kill-pane   %p
-yatm kill-window @w
-yatm focus       %p
-yatm resize      %p <left|right|up|down> <cells>
-yatm even    %p|@w               equal shares: the pane's branch, or a window
-yatm rename  %p|@w [name]        blank name reverts to the shell's title
+tile list [--json]               every window and pane
+tile capture   %p [--lines N]    a pane's text, no escape codes
+tile send-keys %p [--key SPEC] [--enter] [text...]
+tile split     %p [-h|-v]        split a pane, prints the new pane's id
+tile stack     %p                layer a pane behind it, prints its id
+tile new-window                  prints the new window's id
+tile kill-pane   %p
+tile kill-window @w
+tile focus       %p
+tile resize      %p <left|right|up|down> <cells>
+tile even    %p|@w               equal shares: the pane's branch, or a window
+tile rename  %p|@w [name]        blank name reverts to the shell's title
 ```
 
 Anything that fails exits non-zero with the reason on stderr.
@@ -289,7 +289,7 @@ Anything that fails exits non-zero with the reason on stderr.
 ### Looking at a session
 
 ```console
-$ yatm list
+$ tile list
 * @2    1: zsh
   %1      ├─ go test ./...
   %3      └─ tail -f server.log   <- focused
@@ -298,7 +298,7 @@ $ yatm list
 `--json` gives the same tree with geometry and focus, for a program to read:
 
 ```console
-$ yatm list --json
+$ tile list --json
 [
   {
     "id": 2,
@@ -329,10 +329,10 @@ changes what a script sends. Text is passed as arguments; `--enter` appends
 a newline, and `--key` sends a single named or modified key.
 
 ```sh
-yatm send-keys %1 --enter 'go test ./...'
-yatm send-keys %1 --key ctrl+c            # interrupt it
-yatm send-keys %1 --key escape
-yatm send-keys %1 -- '-n leading dashes'  # -- ends flag parsing
+tile send-keys %1 --enter 'go test ./...'
+tile send-keys %1 --key ctrl+c            # interrupt it
+tile send-keys %1 --key escape
+tile send-keys %1 -- '-n leading dashes'  # -- ends flag parsing
 ```
 
 Typing a command this way also names the pane after it, exactly as if you
@@ -345,8 +345,8 @@ rows below the cursor dropped, so `--lines 20` means the last twenty lines
 that have something on them. `--lines 0` returns the whole scrollback.
 
 ```console
-$ yatm capture %1 --lines 3
-ok      yatm/internal/server    0.51s
+$ tile capture %1 --lines 3
+ok      tile/internal/server    0.51s
 ❯
 ```
 
@@ -355,22 +355,22 @@ where one command's output ends. So there is no "run and wait" — send the
 keys, then poll `capture` until what comes back looks finished.
 
 ```sh
-yatm send-keys %1 --enter 'go test ./...'
+tile send-keys %1 --enter 'go test ./...'
 sleep 2
-yatm capture %1 --lines 30
+tile capture %1 --lines 30
 ```
 
 ### Rearranging
 
 Splitting, stacking and killing act at the pane you name and leave focus
 where pressing the equivalent key would — `split` focuses the pane it just
-made, `kill-pane` focuses the survivor. `yatm focus` moves it back.
+made, `kill-pane` focuses the survivor. `tile focus` moves it back.
 
 ```sh
-new=$(yatm split %1 -v)     # prints e.g. %7
-yatm send-keys "$new" --enter 'tail -f server.log'
-yatm rename "$new" logs
-yatm focus %1               # hand focus back
+new=$(tile split %1 -v)     # prints e.g. %7
+tile send-keys "$new" --enter 'tail -f server.log'
+tile rename "$new" logs
+tile focus %1               # hand focus back
 ```
 
 Splitting does not divide evenly. A split halves the share of the pane it
@@ -379,8 +379,8 @@ splits, so splitting the same pane twice leaves 50/25/25 rather than thirds.
 window it evens every branch in it.
 
 ```console
-$ yatm split %1 -h; yatm split %3 -h     # 50/25/25
-$ yatm even %1                           # 34/33/33
+$ tile split %1 -h; tile split %3 -h     # 50/25/25
+$ tile even %1                           # 34/33/33
 ```
 
 `resize` moves one border, in cells, and leaves focus alone. It works in
@@ -388,7 +388,7 @@ weights underneath, so a step is approximate at small sizes — for equal
 shares reach for `even` rather than resizing your way there.
 
 ```sh
-yatm resize %5 down 2       # grow %5 downward, taking from the pane below
+tile resize %5 down 2       # grow %5 downward, taking from the pane below
 ```
 
 Sizes are relative, so a layout built at one terminal size holds its

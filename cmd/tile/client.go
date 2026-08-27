@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"yatm/internal/proto"
+	"tile/internal/proto"
 )
 
 // clientModel is the whole client: it forwards input to the server and paints

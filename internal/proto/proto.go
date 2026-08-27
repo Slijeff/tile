@@ -1,4 +1,4 @@
-// Package proto is the wire contract between the yatm client and server:
+// Package proto is the wire contract between the tile client and server:
 // newline-delimited JSON over a per-user unix socket.
 package proto
 
@@ -69,7 +69,7 @@ type ServerMsg struct {
 // SessionDir is the per-user directory holding every session's socket,
 // created if it doesn't exist yet.
 func SessionDir() (string, error) {
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("yatm-%d", os.Getuid()))
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("tile-%d", os.Getuid()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

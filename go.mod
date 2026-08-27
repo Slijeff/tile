@@ -1,4 +1,4 @@
-module yatm
+module tile
 
 go 1.25.0
 

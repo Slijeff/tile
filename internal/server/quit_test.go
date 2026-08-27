@@ -73,7 +73,7 @@ func TestQuitDialogSwallowsKeysAndDrawsItself(t *testing.T) {
 	s.w, s.h = 60, 12
 
 	s.command(tea.Key{Text: defaultKeymap.Quit})
-	if got := s.frame().Content; !strings.Contains(got, "quit yatm?") {
+	if got := s.frame().Content; !strings.Contains(got, "quit tile?") {
 		t.Fatalf("frame does not show the quit dialog:\n%s", got)
 	}
 

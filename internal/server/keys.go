@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// keymap lists every key yatm binds. Prefix and Lock take a "mod+key" spec
+// keymap lists every key tile binds. Prefix and Lock take a "mod+key" spec
 // (e.g. "ctrl+b", "f12"); every other top-level action is the single
 // character typed right after the prefix. Windows and Panes are
 // sub-layers: pressing their Key doesn't run an action by itself, it opens

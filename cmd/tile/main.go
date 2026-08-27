@@ -15,8 +15,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"yatm/internal/proto"
-	"yatm/internal/server"
+	"tile/internal/proto"
+	"tile/internal/server"
 )
 
 func main() {
@@ -44,7 +44,7 @@ func main() {
 		err = runCommand(cmd, rest[1:], name)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "yatm:", err)
+		fmt.Fprintln(os.Stderr, "tile:", err)
 		os.Exit(1)
 	}
 }
@@ -68,29 +68,29 @@ func splitSession(args []string) (name string, explicit bool, rest []string) {
 
 // usage lives here rather than behind a "help" command because it has to work
 // with no server running, which is exactly when someone needs it.
-const usage = `yatm — terminal multiplexer
+const usage = `tile — terminal multiplexer
 
-  yatm [attach] [-t name]          attach to a session, starting it if needed
-  yatm kill-server [-t name]       stop a session, or every session (asks first)
-  yatm ls                          list running sessions
+  tile [attach] [-t name]          attach to a session, starting it if needed
+  tile kill-server [-t name]       stop a session, or every session (asks first)
+  tile ls                          list running sessions
 
 "-t name" (any command) targets a session other than "default".
 
 Commands for a running session. Panes are %<id>, windows @<id>, as printed
-by "yatm list":
+by "tile list":
 
-  yatm list [--json]               every window and pane
-  yatm capture   %p [--lines N]    a pane's text, no escape codes
-  yatm send-keys %p [--key SPEC] [--enter] [text...]
-  yatm split     %p [-h|-v]        split a pane, prints the new pane's id
-  yatm stack     %p                layer a pane behind it, prints its id
-  yatm new-window                  prints the new window's id
-  yatm kill-pane   %p
-  yatm kill-window @w
-  yatm focus       %p
-  yatm resize      %p <left|right|up|down> <cells>
-  yatm even    %p|@w               equal shares: the pane's branch, or a whole window
-  yatm rename  %p|@w [name]        blank name reverts to the shell's title
+  tile list [--json]               every window and pane
+  tile capture   %p [--lines N]    a pane's text, no escape codes
+  tile send-keys %p [--key SPEC] [--enter] [text...]
+  tile split     %p [-h|-v]        split a pane, prints the new pane's id
+  tile stack     %p                layer a pane behind it, prints its id
+  tile new-window                  prints the new window's id
+  tile kill-pane   %p
+  tile kill-window @w
+  tile focus       %p
+  tile resize      %p <left|right|up|down> <cells>
+  tile even    %p|@w               equal shares: the pane's branch, or a whole window
+  tile rename  %p|@w [name]        blank name reverts to the shell's title
 `
 
 // runCommand sends one command to the named session's server and prints its
@@ -209,7 +209,7 @@ func killServer(session string, explicit bool) error {
 	}
 	for _, n := range names {
 		if err := killOneServer(n); err != nil {
-			fmt.Fprintf(os.Stderr, "yatm: session %q: %v\n", n, err)
+			fmt.Fprintf(os.Stderr, "tile: session %q: %v\n", n, err)
 		}
 	}
 	return nil
