@@ -93,21 +93,25 @@ func (w *window) rename(name string) {
 // server owns every pane, tree and mode flag. All of it is touched from the
 // event loop goroutine only, which is why none of it is locked.
 type server struct {
-	sock    string
-	ln      net.Listener
-	events  chan event
-	windows []*window
-	cur     int
-	w, h    int
-	cli     *client
-	prefix  bool   // the prefix key was pressed; the next key is a command
-	chord   string // first key of a layered binding (e.g. "p"), waiting on its second
-	locked  bool
-	drag    *sep // separator being dragged, if any
-	dragPos int
-	dirty   bool
-	nextID  int
-	done    bool
+	name     string // session name, shown in the status bar and used by "yatm ls"
+	sock     string
+	ln       net.Listener
+	events   chan event
+	windows  []*window
+	cur      int
+	w, h     int
+	cli      *client
+	prefix   bool   // the prefix key was pressed; the next key is a command
+	chord    string // first key of a layered binding (e.g. "p"), waiting on its second
+	locked   bool
+	drag     *sep // separator being dragged, if any
+	dragPos  int
+	swapMode bool  // armed: press a pane and drag onto another to trade places
+	swapSrc  *node // pane the drag started on, nil until pressed
+	hover    *node // pane the drag is currently over, nil until moved onto one
+	dirty    bool
+	nextID   int
+	done     bool
 
 	km         keymap
 	prefixSpec keySpec
@@ -129,9 +133,10 @@ type server struct {
 }
 
 // RunServer runs the yatm daemon: one event loop owning every window, pane
-// and mode flag, until the last window closes or it is told to shut down.
-func RunServer() error {
-	sock, err := proto.SocketPath()
+// and mode flag for one named session, until its last window closes or it is
+// told to shut down. An empty name means the default session.
+func RunServer(name string) error {
+	sock, err := proto.SocketPath(name)
 	if err != nil {
 		return err
 	}
@@ -142,6 +147,7 @@ func RunServer() error {
 	cfg := loadConfig()
 	margin := max(cfg.Margin, 0)
 	s := &server{
+		name:       name,
 		sock:       sock,
 		ln:         ln,
 		events:     make(chan event, 256),
@@ -339,10 +345,10 @@ func (s *server) frame() proto.ServerMsg {
 	var body string
 	activeRect, hasActive := l.rects[w.active]
 	if w.zoomed && w.active != nil && w.active.pane != nil {
-		body = borderPane(w.active.pane, bd, tiledActive != nil, s.theme)
+		body = borderPane(w.active.pane, bd, focusColor(tiledActive != nil, s.theme))
 		activeRect, hasActive = bd, true
 	} else {
-		body = render(w.root, l, tiledActive, s.theme)
+		body = render(w.root, l, tiledActive, s.swapSrc, s.hover, s.theme)
 	}
 	if w.floatOn && w.float != nil {
 		fl, fr := s.floatGeom(), floatRect(bd)
@@ -352,7 +358,7 @@ func (s *server) frame() proto.ServerMsg {
 		}
 		fa := w.focus()
 		body = overlayAt(body, bd.w, fr.x-bd.x, fr.y-bd.y,
-			strings.Split(render(w.float, fl, fa, s.theme), "\n"))
+			strings.Split(render(w.float, fl, fa, s.swapSrc, s.hover, s.theme), "\n"))
 		if r, ok := fl.rects[fa]; ok {
 			activeRect, hasActive = r, true
 		}
@@ -370,6 +376,8 @@ func (s *server) frame() proto.ServerMsg {
 		body = overlayCenter(body, bd.w, bd.h, presetPromptBox(s.presetPrompt.text, s.theme))
 	case s.presetList != nil:
 		body = overlayCenter(body, bd.w, bd.h, presetListBox(s.presetList, s.km, s.theme))
+	case s.swapMode:
+		body = overlay(body, bd.w, bd.h, swapPromptBox(s.km, s.theme))
 	case s.chord != "":
 		body = overlay(body, bd.w, bd.h, chordBox(s.chord, s.km, s.theme))
 	case s.prefix:
@@ -391,12 +399,18 @@ func (s *server) statusBar() string {
 	switch {
 	case s.locked:
 		mode, badge = "LOCKED", s.theme.Red
+	case s.swapMode:
+		mode, badge = "SWAP", s.theme.Yellow
 	case s.prefix || s.chord != "":
 		mode, badge = "PREFIX", s.theme.Yellow
 	}
 	left := " " + mode + " "
 
-	var right string
+	name := s.name
+	if name == "" {
+		name = "default"
+	}
+	right := "[" + name + "]  "
 	w := s.win()
 	if f := w.focus(); f != nil {
 		if p := f.stackAncestor(); p != nil {

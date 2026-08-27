@@ -17,22 +17,42 @@ func contentRect(r rect) rect {
 	return rect{r.x + 1, r.y + 1, r.w - 2, r.h - 2}
 }
 
+// focusColor is a leaf's border color outside of any special mode: the
+// theme's accent when it's focused, its dim surface color otherwise — the
+// clearest cue, for a stacked pane, that it's the one currently on top (see
+// collapsedHeader for the layers behind it, drawn brighter so they stay
+// legible while collapsed).
+func focusColor(focused bool, th theme) string {
+	if focused {
+		return fg(th.Accent)
+	}
+	return fg(th.Surface)
+}
+
+// swapBorderColor is a leaf's border color while swap mode is armed: the
+// pane already picked as the swap's source stands out in red, the one the
+// drag is currently over in yellow (matching the SWAP status badge), so the
+// two ends of the trade are never ambiguous mid-drag. Anything else falls
+// back to its ordinary focusColor.
+func swapBorderColor(n, active, swapSrc, hover *node, th theme) string {
+	switch {
+	case n == swapSrc:
+		return fg(th.Red)
+	case n == hover:
+		return fg(th.Yellow)
+	default:
+		return focusColor(n == active, th)
+	}
+}
+
 // borderPane draws a titled box around a pane's view, one cell of border on
-// every edge, with the pane's name in the top edge. A focused pane's border
-// is drawn in the theme's accent color, every other pane's in its dim
-// surface color — the clearest cue, for a stacked pane, that it's the one
-// currently on top (see collapsedHeader for the layers behind it, drawn
-// brighter so they stay legible while collapsed).
+// every edge, with the pane's name in the top edge, in the given color.
 //
 // Too small to fit a border (either edge under 3 cells), it falls back to
 // the bare, unbordered view, matching contentRect's own fallback.
-func borderPane(p *pane, r rect, focused bool, th theme) string {
+func borderPane(p *pane, r rect, color string) string {
 	if r.w < 3 || r.h < 3 {
 		return fit(p.view(), r.w, r.h)
-	}
-	color := fg(th.Surface)
-	if focused {
-		color = fg(th.Accent)
 	}
 	const reset = "\x1b[m"
 

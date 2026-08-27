@@ -250,11 +250,14 @@ func (l *layout) headerAt(x, y int) *node {
 // render draws the tree as one frame. Every pane is squared off to its exact
 // rect first, so blocks line up by construction, then boxed with its own
 // border — so the gap a split or stack leaves between siblings only needs
-// to stay blank, not draw a second divider on top of it.
-func render(n *node, l *layout, active *node, th theme) string {
+// to stay blank, not draw a second divider on top of it. swapSrc and hover
+// are non-nil only while swap mode is armed, marking the drag's source and
+// current target for a distinct border color; otherwise a leaf's border
+// just follows focus.
+func render(n *node, l *layout, active, swapSrc, hover *node, th theme) string {
 	r := l.rects[n]
 	if n.pane != nil {
-		return borderPane(n.pane, r, n == active, th)
+		return borderPane(n.pane, r, swapBorderColor(n, active, swapSrc, hover, th))
 	}
 	if n.dir == dirStack {
 		before, after := stackRows(n, r.h)
@@ -262,7 +265,7 @@ func render(n *node, l *layout, active *node, th theme) string {
 		for _, c := range before {
 			rows = append(rows, collapsedHeader(c, r.w, th, false))
 		}
-		rows = append(rows, render(n.children[n.activeLayer()], l, active, th))
+		rows = append(rows, render(n.children[n.activeLayer()], l, active, swapSrc, hover, th))
 		for _, c := range after {
 			rows = append(rows, collapsedHeader(c, r.w, th, true))
 		}
@@ -270,7 +273,7 @@ func render(n *node, l *layout, active *node, th theme) string {
 	}
 	parts := make([]string, len(n.children))
 	for i, c := range n.children {
-		parts[i] = render(c, l, active, th)
+		parts[i] = render(c, l, active, swapSrc, hover, th)
 	}
 	if n.dir == dirVert {
 		gm := l.gutter(dirVert)

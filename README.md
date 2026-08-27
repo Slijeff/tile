@@ -15,7 +15,12 @@ devbox run start        # or: devbox run build && ./yatm
 |---|---|
 | `yatm` / `yatm attach` | attach, spawning the daemon if needed |
 | `yatm kill-server` | stop the daemon and every shell in it |
+| `yatm ls` | list running sessions |
 | `yatm help` | the full command list, no daemon required |
+
+Every command takes `-t name` to act on a session other than the default —
+`yatm -t work` attaches to (or starts) a session named "work", independent of
+any other session's windows and panes.
 
 There is also a [scripting interface](#scripting) for driving a session from
 outside it — enumerating panes, reading what they printed, and typing into

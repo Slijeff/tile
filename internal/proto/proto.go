@@ -4,8 +4,11 @@ package proto
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -63,14 +66,57 @@ type ServerMsg struct {
 	Err     string `json:"e,omitempty"` // MsgReply only: the command failed
 }
 
-// SocketPath returns the per-user socket both sides dial, creating its
-// directory.
-// ponytail: one session per socket. Named sessions are a flag on this path
-// plus a lookup, once more than one is worth having.
-func SocketPath() (string, error) {
+// SessionDir is the per-user directory holding every session's socket,
+// created if it doesn't exist yet.
+func SessionDir() (string, error) {
 	dir := filepath.Join(os.TempDir(), fmt.Sprintf("yatm-%d", os.Getuid()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "default.sock"), nil
+	return dir, nil
+}
+
+// SocketPath returns the socket for the named session, creating the session
+// directory. An empty name means the default session, so callers that don't
+// care about multiple sessions can pass "".
+func SocketPath(name string) (string, error) {
+	dir, err := SessionDir()
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		name = "default"
+	}
+	return filepath.Join(dir, name+".sock"), nil
+}
+
+// Sessions lists the names of every session with a server currently
+// listening, cleaning up any stale socket left behind by a server that died
+// without removing it.
+func Sessions() ([]string, error) {
+	dir, err := SessionDir()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".sock")
+		if !ok {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			os.Remove(path)
+			continue
+		}
+		conn.Close()
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
 }

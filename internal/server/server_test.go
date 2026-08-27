@@ -286,3 +286,88 @@ func TestClickFocusesMouseAwarePane(t *testing.T) {
 		t.Fatalf("a click into a mouse-aware pane should still move focus, got %p, want %p", s.win().active, right)
 	}
 }
+
+// While swap mode is armed, two pane clicks should trade the panes' contents
+// (not their tree nodes/weights), focus the second-clicked node, and leave
+// swap mode so a third click resumes normal behavior.
+func TestSwapModeTradesTwoPanesOnDrag(t *testing.T) {
+	events := make(chan event, 256)
+	left, err := newPane(0, 10, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer left.close()
+
+	root := &node{pane: left, weight: 1}
+	l := computeLayout(root, rect{0, 0, 40, 20}, 1)
+	right := split(root, dirHoriz, l)
+	if right == nil {
+		t.Fatal("split should have room in a 40-wide rect")
+	}
+	leftLeaf := root.children[0] // split converts root in place; the original pane moved here
+	rp, err := newPane(1, 10, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rp.close()
+	right.pane = rp
+
+	win := &window{name: "0", root: root, active: leftLeaf}
+	s := &server{windows: []*window{win}, w: 40, h: 22} // body: 40x20
+	s.frame() // establishes w.l
+
+	s.toggleSwapMode()
+	if !s.swapMode {
+		t.Fatal("toggleSwapMode should arm swap mode")
+	}
+
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseClick, Mouse: tea.Mouse{X: 5, Y: 5}}) // press on left pane
+	if s.swapSrc != leftLeaf {
+		t.Fatalf("pressing a pane should mark it as the drag source, got %p, want %p", s.swapSrc, leftLeaf)
+	}
+
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseMotion, Mouse: tea.Mouse{X: 35, Y: 5}}) // drag onto right pane
+	if s.hover != right {
+		t.Fatalf("dragging onto a pane should mark it as the hover target, got %p, want %p", s.hover, right)
+	}
+
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseRelease, Mouse: tea.Mouse{X: 35, Y: 5}}) // release on right pane
+
+	if leftLeaf.pane != rp || right.pane != left {
+		t.Fatalf("swap should trade pane contents, got left=%p right=%p, want left=%p right=%p", leftLeaf.pane, right.pane, rp, left)
+	}
+	if s.swapMode || s.swapSrc != nil || s.hover != nil {
+		t.Fatal("a completed swap should leave swap mode")
+	}
+	if s.win().active != right {
+		t.Fatalf("swap should focus the released-on node, got %p, want %p", s.win().active, right)
+	}
+}
+
+// Releasing a swap drag back on its own source pane (a click with no real
+// drag) should cancel that pick without swapping, but leave swap mode armed
+// so the user can retry without pressing the keybind again.
+func TestSwapModeReleaseOnSourceCancelsPick(t *testing.T) {
+	events := make(chan event, 256)
+	left, err := newPane(0, 10, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer left.close()
+
+	root := &node{pane: left, weight: 1}
+	win := &window{name: "0", root: root, active: root}
+	s := &server{windows: []*window{win}, w: 20, h: 12}
+	s.frame()
+
+	s.toggleSwapMode()
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseClick, Mouse: tea.Mouse{X: 5, Y: 5}})
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseRelease, Mouse: tea.Mouse{X: 5, Y: 5}})
+
+	if !s.swapMode {
+		t.Fatal("releasing on the source pane should leave swap mode armed for a retry")
+	}
+	if s.swapSrc != nil || s.hover != nil {
+		t.Fatal("releasing on the source pane should clear the pending pick")
+	}
+}

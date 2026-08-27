@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,25 +20,28 @@ import (
 )
 
 func main() {
+	name, explicit, rest := splitSession(os.Args[1:])
 	cmd := ""
-	if len(os.Args) > 1 {
-		cmd = os.Args[1]
+	if len(rest) > 0 {
+		cmd = rest[0]
 	}
 	var err error
 	switch cmd {
 	case "", "attach":
-		err = attach()
-	case "__server": // internal: the daemon itself
-		err = server.RunServer()
+		err = attach(name)
+	case "__server": // internal: the daemon itself, given its session name as argv[1]
+		err = server.RunServer(rest[1])
 	case "kill-server":
-		err = killServer()
+		err = killServer(name, explicit)
+	case "ls", "list-sessions":
+		err = listSessions()
 	case "-h", "--help", "help":
 		_, err = os.Stdout.WriteString(usage) // not fmt.Print: %<id> reads as a verb
 	default:
 		// Everything else is a one-shot command for a running server. The
 		// arguments go over untouched: the server owns the whole command
 		// surface, so there is one place to add a command rather than two.
-		err = runCommand(cmd, os.Args[2:])
+		err = runCommand(cmd, rest[1:], name)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yatm:", err)
@@ -44,12 +49,32 @@ func main() {
 	}
 }
 
+// splitSession pulls "-t name" / "--session name" / "--session=name" out of
+// the argument list, wherever it appears, so every command shares one way to
+// pick a session rather than each needing its own flag parsing. explicit
+// reports whether the flag was present at all, which kill-server needs to
+// tell "-t default" from no flag.
+func splitSession(args []string) (name string, explicit bool, rest []string) {
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "--session="); ok {
+			return v, true, append(append([]string{}, args[:i]...), args[i+1:]...)
+		}
+		if (a == "-t" || a == "--session") && i+1 < len(args) {
+			return args[i+1], true, append(append([]string{}, args[:i]...), args[i+2:]...)
+		}
+	}
+	return "", false, args
+}
+
 // usage lives here rather than behind a "help" command because it has to work
 // with no server running, which is exactly when someone needs it.
 const usage = `yatm — terminal multiplexer
 
-  yatm [attach]                    attach to the session, starting it if needed
-  yatm kill-server                 stop the session and every shell in it
+  yatm [attach] [-t name]          attach to a session, starting it if needed
+  yatm kill-server [-t name]       stop a session, or every session (asks first)
+  yatm ls                          list running sessions
+
+"-t name" (any command) targets a session other than "default".
 
 Commands for a running session. Panes are %<id>, windows @<id>, as printed
 by "yatm list":
@@ -68,9 +93,10 @@ by "yatm list":
   yatm rename  %p|@w [name]        blank name reverts to the shell's title
 `
 
-// runCommand sends one command to the running server and prints its answer.
-func runCommand(cmd string, cmdArgs []string) error {
-	sock, err := proto.SocketPath()
+// runCommand sends one command to the named session's server and prints its
+// answer.
+func runCommand(cmd string, cmdArgs []string, session string) error {
+	sock, err := proto.SocketPath(session)
 	if err != nil {
 		return err
 	}
@@ -99,16 +125,17 @@ func runCommand(cmd string, cmdArgs []string) error {
 	return nil
 }
 
-// attach connects to the server, starting one if nothing answers.
-func attach() error {
-	sock, err := proto.SocketPath()
+// attach connects to the named session's server, starting one if nothing
+// answers.
+func attach(session string) error {
+	sock, err := proto.SocketPath(session)
 	if err != nil {
 		return err
 	}
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
 		os.Remove(sock) // a leftover file from a server that died
-		if err := spawnServer(); err != nil {
+		if err := spawnServer(session); err != nil {
 			return err
 		}
 		for range 100 {
@@ -133,13 +160,14 @@ func attach() error {
 	return err
 }
 
-// spawnServer re-execs this binary as a detached daemon.
-func spawnServer() error {
+// spawnServer re-execs this binary as a detached daemon for the named
+// session.
+func spawnServer(session string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	sock, err := proto.SocketPath()
+	sock, err := proto.SocketPath(session)
 	if err != nil {
 		return err
 	}
@@ -150,18 +178,52 @@ func spawnServer() error {
 	}
 	defer log.Close()
 
-	c := exec.Command(exe, "__server")
+	c := exec.Command(exe, "__server", session)
 	c.Stdin = nil
 	c.Stdout, c.Stderr = log, log
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return c.Start()
 }
 
-// killServer stops the daemon and every shell in it. No prompt: the in-app
-// quit binding is the one that asks, and typing "kill-server" is already
-// saying it.
-func killServer() error {
-	sock, err := proto.SocketPath()
+// killServer stops one session's daemon and every shell in it, or — given no
+// "-t" — every running session's. Either way it kills shells with no chance
+// to save work, so it asks first rather than trusting that typing the
+// command was already saying so.
+func killServer(session string, explicit bool) error {
+	if explicit {
+		if !confirm(fmt.Sprintf("kill session %q and every shell in it?", sessionOrDefault(session))) {
+			return nil
+		}
+		return killOneServer(session)
+	}
+
+	names, err := proto.Sessions()
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("no server running")
+	}
+	if !confirm(fmt.Sprintf("kill all %d session(s) and every shell in them?", len(names))) {
+		return nil
+	}
+	for _, n := range names {
+		if err := killOneServer(n); err != nil {
+			fmt.Fprintf(os.Stderr, "yatm: session %q: %v\n", n, err)
+		}
+	}
+	return nil
+}
+
+func sessionOrDefault(session string) string {
+	if session == "" {
+		return "default"
+	}
+	return session
+}
+
+func killOneServer(session string) error {
+	sock, err := proto.SocketPath(session)
 	if err != nil {
 		return err
 	}
@@ -171,4 +233,30 @@ func killServer() error {
 	}
 	defer conn.Close()
 	return newClient(conn).send(proto.ClientMsg{Type: proto.MsgKill})
+}
+
+// confirm asks a yes/no question on the terminal, defaulting to no on
+// anything but an explicit "y".
+func confirm(question string) bool {
+	fmt.Fprintf(os.Stderr, "%s [y/N] ", question)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes"
+}
+
+// listSessions prints the name of every session with a server currently
+// running.
+func listSessions() error {
+	names, err := proto.Sessions()
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		fmt.Println("no sessions")
+		return nil
+	}
+	for _, n := range names {
+		fmt.Println(n)
+	}
+	return nil
 }

@@ -20,6 +20,7 @@ func helpEntries(km keymap) []helpEntry {
 		{km.Stack, "stack a pane"},
 		{km.Zoom, "zoom the active pane"},
 		{km.Float, "toggle floating terminal"},
+		{km.Swap, "swap two panes (click + drag)"},
 		{km.CyclePane, "cycle panes"},
 		{"←↑↓→", "move focus (cycles layer at a dead end)"},
 		{km.Windows.Key, "windows…"},
@@ -60,6 +61,16 @@ func helpBox(km keymap, th theme) []string {
 // leader) that continues it.
 func chordBox(chord string, km keymap, th theme) []string {
 	return entriesBox("» "+km.Prefix+" "+chord, chordEntries(km, chord), th)
+}
+
+// swapPromptBox is the corner tooltip shown for as long as swap mode is
+// armed, so a user who just pressed the keybind knows what to do with the
+// mouse before making a move.
+func swapPromptBox(km keymap, th theme) []string {
+	return panel("» swap", []string{
+		"click a pane, drag onto another to trade them",
+		km.Swap + " cancels",
+	}, 0, th)
 }
 
 // entriesBox is the shared renderer behind helpBox and chordBox: one

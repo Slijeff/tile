@@ -224,6 +224,8 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 		s.stack()
 	case s.km.Zoom:
 		s.toggleZoom()
+	case s.km.Swap:
+		s.toggleSwapMode()
 	case s.km.Windows.Key + s.km.Windows.New:
 		_ = s.newWindow()
 	case s.km.Windows.Key + s.km.Windows.Kill:
@@ -398,6 +400,16 @@ func (s *server) toggleZoom() {
 	s.dirty = true
 }
 
+// toggleSwapMode arms or cancels swap mode. While armed, mouse clicks stop
+// doing their usual job (focus, resize-drag, forwarding to the program
+// inside) and instead start a drag that trades two panes' places; pressing
+// the keybind again cancels, mid-drag or not.
+func (s *server) toggleSwapMode() {
+	s.swapMode = !s.swapMode
+	s.swapSrc, s.hover = nil, nil
+	s.dirty = true
+}
+
 func (s *server) detach() {
 	if s.cli != nil {
 		s.cli.send(proto.ServerMsg{Type: proto.MsgDetach})
@@ -491,16 +503,46 @@ func (s *server) mouse(m proto.ClientMsg) {
 	s.paneMouse(m, l)
 }
 
-// paneMouse routes one event through a tree's geometry: a click on a
-// collapsed stack layer's header brings it forward, one on a gutter starts a
-// resize drag, one on a pane focuses it, and a wheel scrolls it — unless the
-// program inside asked for mouse reporting, in which case the event is
-// forwarded with pane-relative coordinates. A coordinate the tree doesn't
-// cover is dropped, which is what keeps a click outside the floating
-// terminal from reaching the tiled panes underneath it. The floating tree is
-// never split, so it simply has no gutters for the drag branch to find.
+// paneMouse routes one event through a tree's geometry. While swap mode is
+// armed it takes over entirely: a press picks the drag's source pane,
+// motion tracks which pane it's currently over (for the border highlight),
+// and release onto a different pane trades the two and disarms the mode.
+// Otherwise, a click on a collapsed stack layer's header brings it forward,
+// one on a gutter starts a resize drag, one on a pane focuses it, and a
+// wheel scrolls it — unless the program inside asked for mouse reporting,
+// in which case the event is forwarded with pane-relative coordinates. A
+// coordinate the tree doesn't cover is dropped, which is what keeps a click
+// outside the floating terminal from reaching the tiled panes underneath
+// it. The floating tree is never split, so it simply has no gutters for the
+// resize-drag branch to find.
 func (s *server) paneMouse(m proto.ClientMsg, l *layout) {
 	mo := m.Mouse
+	if s.swapMode {
+		var leaf *node
+		if n := l.paneAt(mo.X, mo.Y); n != nil && n.pane != nil {
+			leaf = n
+		}
+		switch m.Kind {
+		case proto.MouseClick:
+			if s.swapSrc == nil {
+				s.swapSrc = leaf
+			}
+		case proto.MouseMotion:
+			if s.swapSrc != nil {
+				s.hover = leaf
+			}
+		case proto.MouseRelease:
+			if s.swapSrc != nil {
+				if leaf != nil && leaf != s.swapSrc {
+					leaf.pane, s.swapSrc.pane = s.swapSrc.pane, leaf.pane
+					s.win().active = leaf
+					s.swapMode = false
+				}
+				s.swapSrc, s.hover = nil, nil
+			}
+		}
+		return
+	}
 	if m.Kind == proto.MouseClick {
 		if h := l.headerAt(mo.X, mo.Y); h != nil {
 			s.focusLayer(h) // clicking a collapsed stack layer's header brings it forward

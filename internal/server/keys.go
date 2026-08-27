@@ -26,6 +26,7 @@ type keymap struct {
 	Stack        string      `yaml:"stack"`         // layer a new pane behind the active one
 	Zoom         string      `yaml:"zoom"`          // grow the active pane to fill the window
 	Float        string      `yaml:"float"`         // toggle the centered floating terminal
+	Swap         string      `yaml:"swap"`          // arm swap mode: drag one pane onto another to trade places
 	Preset       string      `yaml:"preset"`        // save the current layout as a named preset
 	LoadPreset   string      `yaml:"load_preset"`   // opens the preset picker to restore a saved layout
 	DeletePreset string      `yaml:"delete_preset"` // inside the preset picker, deletes the highlighted preset
@@ -69,6 +70,7 @@ var defaultKeymap = keymap{
 	Stack:        "s",
 	Zoom:         "z",
 	Float:        "f",
+	Swap:         "m",
 	Preset:       "S",
 	LoadPreset:   "L",
 	DeletePreset: "x",
@@ -102,6 +104,7 @@ func actionEntries(km keymap) []helpEntry {
 		{km.Stack, "stack a pane"},
 		{km.Zoom, "zoom the active pane"},
 		{km.Float, "toggle floating terminal"},
+		{km.Swap, "swap two panes (click + drag)"},
 		{km.Preset, "save preset"},
 		{km.LoadPreset, "load preset"},
 		{km.Theme, "colorscheme picker"},
