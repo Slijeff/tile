@@ -60,6 +60,8 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case proto.MsgDetach:
 			m.switchTo = msg.Content
 			return m, tea.Quit
+		case proto.MsgClipboard:
+			return m, tea.Batch(m.recv, tea.SetClipboard(msg.Content))
 		}
 		return m, m.recv
 
@@ -71,6 +73,9 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		_ = m.send(proto.ClientMsg{Type: proto.MsgKey, Key: tea.Key(msg)})
+
+	case tea.PasteMsg:
+		_ = m.send(proto.ClientMsg{Type: proto.MsgPaste, Text: msg.Content})
 
 	case tea.MouseClickMsg:
 		_ = m.send(proto.ClientMsg{Type: proto.MsgMouse, Mouse: tea.Mouse(msg), Kind: proto.MouseClick})

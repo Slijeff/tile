@@ -82,10 +82,42 @@ func (s *server) sendKey(k tea.Key) {
 	}
 }
 
+// paste delivers bracket-pasted text to whatever is currently taking typed
+// input: a rename/preset-name prompt if one is open, otherwise the focused
+// pane's shell. It's swallowed by every other modal UI and by a pending
+// prefix chord, the same as an ordinary keystroke would be there.
+func (s *server) paste(text string) {
+	if text == "" {
+		return
+	}
+	s.dirty = true
+	switch {
+	case s.quitting, s.sessionDeleting, s.picker != nil, s.panes != nil,
+		s.presetList != nil, s.sessions != nil, s.prefix, s.chord != "":
+		return
+	case s.renamer != nil:
+		s.renamer.text += stripNewlines(text)
+	case s.presetPrompt != nil:
+		s.presetPrompt.text += stripNewlines(text)
+	default:
+		if p := s.activePane(); p != nil {
+			p.scroll = 0
+			p.emu.Paste(text)
+		}
+	}
+}
+
+// stripNewlines flattens a paste's line breaks for the single-line
+// rename/preset prompts, which have no notion of a multi-line value.
+func stripNewlines(s string) string {
+	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(s)
+}
+
 // sendKeyTo is sendKey aimed at a named pane rather than the focused one, so
 // the CLI can type into a pane without stealing focus to do it.
 func sendKeyTo(p *pane, k tea.Key) {
 	p.scroll = 0
+	p.clearSelection()
 	p.trackCommand(k)
 	p.emu.SendKey(vt.KeyPressEvent(uv.Key(normalizeShiftedKey(k))))
 }
@@ -467,6 +499,25 @@ func (s *server) mouse(m proto.ClientMsg) {
 		return
 	}
 
+	// Likewise a mouse text-selection drag, started by paneMouseOff: every
+	// later event goes straight to that pane, translated through the rect
+	// it started in, rather than being re-hit-tested against whatever the
+	// pointer has since wandered over.
+	if s.selPane != nil {
+		x := min(max(mo.X-s.selRect.x, 0), s.selRect.w-1)
+		y := min(max(mo.Y-s.selRect.y, 0), s.selRect.h-1)
+		switch m.Kind {
+		case proto.MouseMotion:
+			s.selPane.selectExtend(x, y)
+		case proto.MouseRelease:
+			if text := s.selPane.selectEnd(); text != "" {
+				s.copyToClipboard(text)
+			}
+			s.selPane = nil
+		}
+		return
+	}
+
 	// Row 0 is the tab bar, not part of the pane tree: a click there
 	// switches windows, anything else on that row is ignored.
 	if mo.Y == 0 {
@@ -501,18 +552,11 @@ func (s *server) mouse(m proto.ClientMsg) {
 		if leaf == nil || leaf.pane == nil {
 			return
 		}
+		r := contentRect(s.body()) // inset past the border borderPane draws around the zoomed pane
 		if !leaf.pane.mouseOn {
-			if m.Kind == proto.MouseWheel {
-				switch mo.Button {
-				case tea.MouseWheelUp:
-					leaf.pane.scrollBy(scrollLines)
-				case tea.MouseWheelDown:
-					leaf.pane.scrollBy(-scrollLines)
-				}
-			}
+			s.paneMouseOff(leaf, m, r)
 			return
 		}
-		r := s.body()
 		mo.X, mo.Y = mo.X-r.x, mo.Y-r.y
 		leaf.pane.emu.SendMouse(toVTMouse(m.Kind, mo))
 		return
@@ -584,21 +628,56 @@ func (s *server) paneMouse(m proto.ClientMsg, l *layout) {
 	if m.Kind == proto.MouseClick {
 		s.focusLayer(leaf) // a click always moves focus, even into a mouse-aware program
 	}
+	// l.rects[leaf] is the bordered box render() draws; contentRect insets
+	// it past that 1-cell border to where the pane's own cell (0,0) actually
+	// lands on screen, which is what both a selection and a forwarded event
+	// need to line up with.
+	r := contentRect(l.rects[leaf])
 	if !leaf.pane.mouseOn {
-		switch m.Kind {
-		case proto.MouseWheel:
-			switch mo.Button {
-			case tea.MouseWheelUp:
-				leaf.pane.scrollBy(scrollLines)
-			case tea.MouseWheelDown:
-				leaf.pane.scrollBy(-scrollLines)
-			}
-		}
+		s.paneMouseOff(leaf, m, r)
 		return
 	}
-	r := l.rects[leaf]
 	mo.X, mo.Y = mo.X-r.x, mo.Y-r.y
 	leaf.pane.emu.SendMouse(toVTMouse(m.Kind, mo))
+}
+
+// paneMouseOff handles a mouse event for a pane whose program hasn't asked
+// for mouse reporting: a wheel scrolls it, same as always, and a left-button
+// press now starts a text-selection drag instead of just doing nothing. r is
+// that pane's current on-screen rect, both to translate the press into
+// pane-relative coordinates and, via s.selRect, for mouse()'s s.selPane
+// branch to keep translating the rest of the drag by after this call
+// returns.
+func (s *server) paneMouseOff(leaf *node, m proto.ClientMsg, r rect) {
+	mo := m.Mouse
+	switch m.Kind {
+	case proto.MouseWheel:
+		switch mo.Button {
+		case tea.MouseWheelUp:
+			leaf.pane.scrollBy(scrollLines)
+		case tea.MouseWheelDown:
+			leaf.pane.scrollBy(-scrollLines)
+		}
+	case proto.MouseClick:
+		if mo.Button == tea.MouseLeft {
+			// A press landing on the pane's own border (r is inset past it)
+			// still starts a selection, clamped to the nearest content cell,
+			// rather than one at a bogus negative/out-of-range position.
+			x := min(max(mo.X-r.x, 0), r.w-1)
+			y := min(max(mo.Y-r.y, 0), r.h-1)
+			s.selPane, s.selRect = leaf.pane, r
+			leaf.pane.selectStart(x, y)
+		}
+	}
+}
+
+// copyToClipboard hands mouse-selected text to the attached client, which
+// sets the real system clipboard via OSC52 — the server has no terminal of
+// its own to send that escape sequence through.
+func (s *server) copyToClipboard(text string) {
+	if s.cli != nil {
+		s.cli.send(proto.ServerMsg{Type: proto.MsgClipboard, Content: text})
+	}
 }
 
 func toVTMouse(kind string, m tea.Mouse) vt.Mouse {

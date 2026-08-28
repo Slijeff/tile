@@ -344,6 +344,87 @@ func TestSwapModeTradesTwoPanesOnDrag(t *testing.T) {
 	}
 }
 
+// Dragging the mouse across a plain (non-mouse-aware) pane should highlight
+// the text it crosses and, on release, hand the covered text to the
+// attached client to put on the system clipboard.
+func TestMouseDragSelectsAndCopies(t *testing.T) {
+	events := make(chan event, 256)
+	p, err := newPane(0, 20, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	if _, err := p.emu.Write([]byte("hello world")); err != nil {
+		t.Fatal(err)
+	}
+
+	win := &window{name: "0", root: &node{pane: p, weight: 1}, active: &node{pane: p, weight: 1}}
+	win.active = win.root
+	s := &server{windows: []*window{win}, w: 20, h: 12} // body: 20x10 at screen row 1; bordered, so content starts at (1,2)
+	cli := &client{out: make(chan proto.ServerMsg, 4)}
+	s.cli = cli
+	s.frame() // establishes w.l
+
+	// Row 2 in screen space is pane row 0 once the 1-cell border is
+	// accounted for; columns 1-5 cover "hello".
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseClick, Mouse: tea.Mouse{X: 1, Y: 2, Button: tea.MouseLeft}})
+	if s.selPane != p {
+		t.Fatalf("a left-button press on a plain pane should start a selection drag, selPane = %p, want %p", s.selPane, p)
+	}
+
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseMotion, Mouse: tea.Mouse{X: 5, Y: 2, Button: tea.MouseLeft}})
+	if !p.hasSel {
+		t.Fatal("dragging off the starting cell should mark a selection as active")
+	}
+
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseRelease, Mouse: tea.Mouse{X: 5, Y: 2, Button: tea.MouseLeft}})
+	if s.selPane != nil {
+		t.Fatal("release should end the selection drag")
+	}
+	if !p.hasSel {
+		t.Fatal("a non-empty selection should stay highlighted after release")
+	}
+
+	select {
+	case m := <-cli.out:
+		if m.Type != proto.MsgClipboard || m.Content != "hello" {
+			t.Fatalf("got %+v, want a clipboard message with content %q", m, "hello")
+		}
+	default:
+		t.Fatal("expected a clipboard message to be sent to the client")
+	}
+}
+
+// A plain click with no drag must not leave a one-character selection behind
+// or copy anything — it should behave exactly as it always has: focus.
+func TestMouseClickWithoutDragDoesNotSelect(t *testing.T) {
+	events := make(chan event, 256)
+	p, err := newPane(0, 20, 10, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+
+	win := &window{name: "0", root: &node{pane: p, weight: 1}}
+	win.active = win.root
+	s := &server{windows: []*window{win}, w: 20, h: 12}
+	cli := &client{out: make(chan proto.ServerMsg, 4)}
+	s.cli = cli
+	s.frame()
+
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseClick, Mouse: tea.Mouse{X: 1, Y: 2, Button: tea.MouseLeft}})
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseRelease, Mouse: tea.Mouse{X: 1, Y: 2, Button: tea.MouseLeft}})
+
+	if p.hasSel {
+		t.Fatal("a click with no drag should not leave a selection highlighted")
+	}
+	select {
+	case m := <-cli.out:
+		t.Fatalf("a click with no drag should not send a clipboard message, got %+v", m)
+	default:
+	}
+}
+
 // Releasing a swap drag back on its own source pane (a click with no real
 // drag) should cancel that pick without swapping, but leave swap mode armed
 // so the user can retry without pressing the keybind again.

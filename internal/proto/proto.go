@@ -17,6 +17,7 @@ import (
 
 const (
 	MsgKey    = "key"
+	MsgPaste  = "paste"
 	MsgMouse  = "mouse"
 	MsgResize = "resize"
 	MsgDetach = "detach"
@@ -49,12 +50,23 @@ type ClientMsg struct {
 	W     int       `json:"w,omitempty"`
 	H     int       `json:"h,omitempty"`
 
+	// MsgPaste only: the pasted text, forwarded from a bracketed-paste
+	// event the client's terminal reported.
+	Text string `json:"txt,omitempty"`
+
 	// MsgCmd only: the subcommand and its raw arguments, forwarded verbatim
 	// from the command line. The server owns all parsing, so there is one
 	// place to add a command.
 	Cmd  string   `json:"cmd,omitempty"`
 	Args []string `json:"args,omitempty"`
 }
+
+const (
+	// MsgClipboard asks the client to set the system clipboard (via OSC52)
+	// to Content: the text mouse-selected out of a pane whose program isn't
+	// itself reading the mouse.
+	MsgClipboard = "clipboard"
+)
 
 // ServerMsg travels from the server to the attached client.
 type ServerMsg struct {

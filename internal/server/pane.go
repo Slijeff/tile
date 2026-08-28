@@ -31,6 +31,17 @@ type pane struct {
 	cmdBuf     []rune // the line typed so far, tracked until the first Enter names the pane
 	named      bool   // the border name has been set, either by trackCommand or a manual rename
 	borderName string // set once named; the pane's own border name, distinct from title
+
+	// Mouse text-selection, for panes whose program hasn't grabbed the
+	// mouse for itself. selFrom/selTo are pane-relative cells; selecting is
+	// true only while the button is still down, selDragged distinguishes an
+	// actual drag from a plain click (which shouldn't leave a one-cell
+	// selection behind), and hasSel is what view() checks to paint it.
+	selecting  bool
+	selDragged bool
+	hasSel     bool
+	selFrom    uv.Position
+	selTo      uv.Position
 }
 
 func shellPath() string {
@@ -182,30 +193,158 @@ func (p *pane) scrollBy(delta int) {
 }
 
 // view renders the pane's current viewport: the live screen, or a window
-// into scrollback history while scrolled back.
+// into scrollback history while scrolled back. A mouse selection, if one is
+// up, gets painted in on top.
 func (p *pane) view() string {
-	if p.scroll == 0 || p.emu.IsAltScreen() {
-		return p.emu.Render()
-	}
-	sbLen := p.emu.ScrollbackLen()
-	top := sbLen - p.scroll // first row of the viewport, in scrollback+screen space
 	lines := make(uv.Lines, p.h)
-	for i := range lines {
-		row := top + i
-		switch {
-		case row < 0:
-			lines[i] = uv.NewLine(p.w)
-		case row < sbLen:
-			lines[i] = p.emu.Scrollback().Line(row)
-		default:
-			line := uv.NewLine(p.w)
-			for x := range p.w {
-				line.Set(x, p.emu.CellAt(x, row-sbLen))
-			}
-			lines[i] = line
-		}
+	for y := range lines {
+		lines[y] = p.screenLine(y)
+	}
+	if p.hasSel {
+		p.paintSelection(lines)
 	}
 	return lines.Render()
+}
+
+// screenLine returns pane-relative row y as currently displayed — scrollback
+// while scrolled back, the live screen otherwise — as a freshly copied Line,
+// safe for a caller to restyle without corrupting the emulator's own buffer
+// or scrollback. Shared by view(), which paints a selection on top of what
+// it returns, and selectedText(), which reads the same cells back as text.
+func (p *pane) screenLine(y int) uv.Line {
+	line := uv.NewLine(p.w)
+	if p.scroll == 0 || p.emu.IsAltScreen() {
+		for x := range p.w {
+			line.Set(x, p.emu.CellAt(x, y))
+		}
+		return line
+	}
+	sbLen := p.emu.ScrollbackLen()
+	row := sbLen - p.scroll + y // this row's position in scrollback+screen space
+	switch {
+	case row < 0:
+		// past the top of scrollback: leave it blank
+	case row < sbLen:
+		for x, c := range p.emu.Scrollback().Line(row) {
+			if x >= p.w {
+				break
+			}
+			cell := c
+			line.Set(x, &cell)
+		}
+	default:
+		for x := range p.w {
+			line.Set(x, p.emu.CellAt(x, row-sbLen))
+		}
+	}
+	return line
+}
+
+// selectStart begins a mouse-drag text selection at a pane-relative cell,
+// discarding whatever selection was there before.
+func (p *pane) selectStart(x, y int) {
+	p.selecting, p.selDragged, p.hasSel = true, false, false
+	p.selFrom = uv.Pos(x, y)
+	p.selTo = p.selFrom
+}
+
+// selectExtend moves the live end of an in-progress drag. A plain click that
+// never moves off its starting cell never sets selDragged, which is what
+// keeps a no-drag click from leaving a one-character selection behind.
+func (p *pane) selectExtend(x, y int) {
+	if !p.selecting {
+		return
+	}
+	to := uv.Pos(x, y)
+	if to != p.selFrom {
+		p.selDragged = true
+	}
+	p.selTo = to
+	p.hasSel = p.selDragged
+}
+
+// selectEnd finishes the drag and returns the selected text, ready to hand
+// to the client's clipboard. A plain click (no drag) or a drag that landed
+// on only blank cells returns "" and clears the selection rather than
+// leaving a highlight with nothing meaningful to have copied.
+func (p *pane) selectEnd() string {
+	p.selecting = false
+	if !p.selDragged {
+		p.hasSel = false
+		return ""
+	}
+	text := p.selectedText()
+	p.hasSel = text != ""
+	return text
+}
+
+// clearSelection drops any selection outside of a drag — before ordinary
+// typing resumes, or a fresh click lands elsewhere — so a stale highlight
+// never lingers over content that has moved on.
+func (p *pane) clearSelection() {
+	p.selecting, p.selDragged, p.hasSel = false, false, false
+}
+
+// selBounds returns the selection's two endpoints in reading order (top to
+// bottom, left to right within a row), regardless of which one the drag
+// started or ended on.
+func (p *pane) selBounds() (from, to uv.Position) {
+	from, to = p.selFrom, p.selTo
+	if from.Y > to.Y || (from.Y == to.Y && from.X > to.X) {
+		from, to = to, from
+	}
+	return from, to
+}
+
+// paintSelection reverses the fg/bg of every cell the selection covers, read
+// linearly from its start to its end rather than as a rectangular block —
+// the whole width of every row in between, just the tail from the start
+// column on its first row and the head up to the end column on its last —
+// which is how a plain terminal's own click-drag selection reads.
+func (p *pane) paintSelection(lines uv.Lines) {
+	from, to := p.selBounds()
+	for y := max(from.Y, 0); y <= to.Y && y < len(lines); y++ {
+		lo, hi := 0, p.w-1
+		if y == from.Y {
+			lo = from.X
+		}
+		if y == to.Y {
+			hi = to.X
+		}
+		line := lines[y]
+		for x := max(lo, 0); x <= hi && x < len(line); x++ {
+			if line[x].IsZero() {
+				continue // a wide rune's placeholder column: nothing to invert
+			}
+			line[x].Style.Attrs |= uv.AttrReverse
+		}
+	}
+}
+
+// selectedText reads the same span paintSelection highlights back out as
+// plain text, one joined line per row, each right-trimmed of the padding
+// every row is stored with.
+func (p *pane) selectedText() string {
+	from, to := p.selBounds()
+	var rows []string
+	for y := max(from.Y, 0); y <= to.Y && y < p.h; y++ {
+		lo, hi := 0, p.w-1
+		if y == from.Y {
+			lo = from.X
+		}
+		if y == to.Y {
+			hi = to.X
+		}
+		line := p.screenLine(y)
+		var row strings.Builder
+		for x := max(lo, 0); x <= hi && x < len(line); x++ {
+			if c := line[x]; c.Width > 0 {
+				row.WriteString(c.Content)
+			}
+		}
+		rows = append(rows, strings.TrimRight(row.String(), " "))
+	}
+	return strings.Join(rows, "\n")
 }
 
 // capture returns the pane's last n lines of text, for the CLI to hand an
@@ -259,6 +398,7 @@ func (p *pane) resize(w, h int) {
 	if w < 1 || h < 1 || (w == p.w && h == p.h) {
 		return
 	}
+	p.clearSelection() // its coordinates are relative to the old geometry
 	if h < p.h && !p.emu.IsAltScreen() {
 		p.shrinkHeight(h)
 	}

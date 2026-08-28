@@ -109,6 +109,8 @@ type server struct {
 	swapMode bool  // armed: press a pane and drag onto another to trade places
 	swapSrc  *node // pane the drag started on, nil until pressed
 	hover    *node // pane the drag is currently over, nil until moved onto one
+	selPane  *pane // pane a mouse text-selection drag is under way in, if any
+	selRect  rect  // that pane's on-screen rect, for translating later events in the drag
 	dirty    bool
 	nextID   int
 	done     bool
@@ -281,6 +283,8 @@ func (s *server) client(c *client, m proto.ClientMsg) {
 		}
 	case proto.MsgKey:
 		s.key(m.Key)
+	case proto.MsgPaste:
+		s.paste(m.Text)
 	case proto.MsgMouse:
 		s.mouse(m)
 	case proto.MsgDetach:
