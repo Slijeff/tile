@@ -1,0 +1,56 @@
+version: 2
+
+project_name: tile
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: tile
+    main: ./cmd/tile
+    binary: tile
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: tile
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+homebrew_casks:
+  - name: tile
+    repository:
+      owner: Slijeff
+      name: homebrew-tile
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/Slijeff/tile"
+    description: "A small tmux-like terminal multiplexer"
+    binaries:
+      - tile
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tile"]
+          end
