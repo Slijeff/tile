@@ -126,17 +126,34 @@ func runCommand(cmd string, cmdArgs []string, session string) error {
 }
 
 // attach connects to the named session's server, starting one if nothing
-// answers.
+// answers, and keeps going for as long as the sessions picker (s p) asks
+// to hop to another running session: a switch is a plain detach that
+// names where to reconnect next, so each pass here is its own attachOnce
+// against a fresh connection.
 func attach(session string) error {
+	for {
+		next, err := attachOnce(session)
+		if err != nil || next == "" {
+			return err
+		}
+		session = next
+	}
+}
+
+// attachOnce dials one session's server, starting it if nothing answers,
+// and runs the client program against it until it detaches. The returned
+// name is blank for a plain detach or quit, or the session the sessions
+// picker asked to switch to.
+func attachOnce(session string) (string, error) {
 	sock, err := proto.SocketPath(session)
 	if err != nil {
-		return err
+		return "", err
 	}
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
 		os.Remove(sock) // a leftover file from a server that died
 		if err := spawnServer(session); err != nil {
-			return err
+			return "", err
 		}
 		for range 100 {
 			time.Sleep(20 * time.Millisecond)
@@ -145,7 +162,7 @@ func attach(session string) error {
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("server did not come up: %w", err)
+			return "", fmt.Errorf("server did not come up: %w", err)
 		}
 	}
 	defer conn.Close()
@@ -154,10 +171,12 @@ func attach(session string) error {
 	// share this socket and must leave the attached session where it is.
 	m := newClient(conn)
 	if err := m.send(proto.ClientMsg{Type: proto.MsgAttach}); err != nil {
-		return err
+		return "", err
 	}
-	_, err = tea.NewProgram(m).Run()
-	return err
+	if _, err := tea.NewProgram(m).Run(); err != nil {
+		return "", err
+	}
+	return m.switchTo, nil
 }
 
 // spawnServer re-execs this binary as a detached daemon for the named

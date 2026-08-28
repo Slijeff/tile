@@ -22,6 +22,10 @@ func (s *server) key(k tea.Key) {
 		s.quitKey(k)
 		return
 	}
+	if s.sessionDeleting {
+		s.sessionDeleteKey(k)
+		return
+	}
 	if s.picker != nil {
 		s.pickerKey(k)
 		return
@@ -40,6 +44,10 @@ func (s *server) key(k tea.Key) {
 	}
 	if s.presetList != nil {
 		s.presetListKey(k)
+		return
+	}
+	if s.sessions != nil {
+		s.sessionPickerKey(k)
 		return
 	}
 
@@ -220,8 +228,6 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 		s.split(dirHoriz)
 	case s.km.SplitVert:
 		s.split(dirVert)
-	case s.km.Stack:
-		s.stack()
 	case s.km.Zoom:
 		s.toggleZoom()
 	case s.km.Swap:
@@ -240,6 +246,18 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 		s.openRenamer()
 	case s.km.Panes.Key + s.km.Panes.Picker:
 		s.openPanePicker()
+	case s.km.Panes.Key + s.km.Panes.Stack:
+		s.stack()
+	case s.km.Sessions.Key + s.km.Sessions.New:
+		s.newSession()
+	case s.km.Sessions.Key + s.km.Sessions.Delete:
+		s.confirmDeleteSession()
+	case s.km.Sessions.Key + s.km.Sessions.Rename:
+		s.openSessionRenamer()
+	case s.km.Sessions.Key + s.km.Sessions.CloseOthers:
+		s.closeOtherSessions()
+	case s.km.Sessions.Key + s.km.Sessions.Picker:
+		s.openSessionPicker()
 	case s.km.Preset:
 		s.openPresetPrompt()
 	case s.km.LoadPreset:

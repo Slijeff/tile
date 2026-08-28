@@ -5,11 +5,13 @@ import (
 )
 
 // renamer is the rename prompt's open state: a single-line text buffer the
-// user edits, seeded with the active pane's border title or the active
-// window's tab name. forWindow says which one Enter commits to.
+// user edits, seeded with the active pane's border title, the active
+// window's tab name, or the session's own name. forWindow/forSession say
+// which one Enter commits to; neither set means the active pane.
 type renamer struct {
-	text      string
-	forWindow bool
+	text       string
+	forWindow  bool
+	forSession bool
 }
 
 // openRenamer seeds the prompt with the active pane's current border
@@ -30,6 +32,14 @@ func (s *server) openWindowRenamer() {
 	s.renamer = &renamer{text: s.win().displayName(), forWindow: true}
 }
 
+// openSessionRenamer seeds the prompt with the session's current name.
+// Unlike a pane or window, a session has no auto-tracked name to fall back
+// to, so renameSession — unlike pane.rename/window.rename — treats a blank
+// commit as a no-op rather than a reset.
+func (s *server) openSessionRenamer() {
+	s.renamer = &renamer{text: s.sessionName(), forSession: true}
+}
+
 // renamerKey handles one keystroke while the rename prompt is open. Enter
 // commits the typed name to the active pane's border or the active
 // window's tab, whichever openRenamer/openWindowRenamer targeted; leaving
@@ -39,10 +49,15 @@ func (s *server) renamerKey(k tea.Key) {
 	s.dirty = true
 	switch {
 	case k.Code == tea.KeyEnter:
-		if s.renamer.forWindow {
+		switch {
+		case s.renamer.forWindow:
 			s.win().rename(s.renamer.text)
-		} else if p := s.activePane(); p != nil {
-			p.rename(s.renamer.text)
+		case s.renamer.forSession:
+			s.renameSession(s.renamer.text)
+		default:
+			if p := s.activePane(); p != nil {
+				p.rename(s.renamer.text)
+			}
 		}
 		s.renamer = nil
 	case k.Code == tea.KeyEscape:
@@ -59,10 +74,13 @@ func (s *server) renamerKey(k tea.Key) {
 // renameBox renders the rename prompt as a bordered floating panel, styled
 // like the picker and help overlays: a title row and one editable line with
 // a trailing cursor.
-func renameBox(text string, forWindow bool, th theme) []string {
+func renameBox(text string, forWindow, forSession bool, th theme) []string {
 	title := "rename pane  (enter confirm · esc cancel)"
-	if forWindow {
+	switch {
+	case forWindow:
 		title = "rename window  (enter confirm · esc cancel)"
+	case forSession:
+		title = "rename session  (enter confirm · esc cancel)"
 	}
 	input := fg(th.Text) + text + "▏\x1b[m"
 	return panel(title, []string{input}, 24, th)

@@ -15,27 +15,27 @@ import (
 // end, the 0-9 window selectors, and pressing the prefix twice to send it
 // through are structural and not remapped here.
 type keymap struct {
-	Prefix       string      `yaml:"prefix"` // enters command mode
-	Lock         string      `yaml:"lock"`   // toggles lock mode, prefix or not
-	NextWindow   string      `yaml:"next_window"`
-	PrevWindow   string      `yaml:"prev_window"`
-	CyclePane    string      `yaml:"cycle_pane"`    // move to the next pane in tree order
-	NewPane      string      `yaml:"new_pane"`      // split along whichever axis has more room
-	SplitHoriz   string      `yaml:"split_horiz"`   // side by side
-	SplitVert    string      `yaml:"split_vert"`    // top to bottom
-	Stack        string      `yaml:"stack"`         // layer a new pane behind the active one
-	Zoom         string      `yaml:"zoom"`          // grow the active pane to fill the window
-	Float        string      `yaml:"float"`         // toggle the centered floating terminal
-	Swap         string      `yaml:"swap"`          // arm swap mode: drag one pane onto another to trade places
-	Preset       string      `yaml:"preset"`        // save the current layout as a named preset
-	LoadPreset   string      `yaml:"load_preset"`   // opens the preset picker to restore a saved layout
-	DeletePreset string      `yaml:"delete_preset"` // inside the preset picker, deletes the highlighted preset
-	Theme        string      `yaml:"theme"`         // opens the colorscheme picker
-	Reload       string      `yaml:"reload"`        // re-reads config.yaml from disk
-	Detach       string      `yaml:"detach"`
-	Quit         string      `yaml:"quit"`
-	Windows      windowLayer `yaml:"windows"` // sub-layer: press Key, then New, Kill or Rename
-	Panes        paneLayer   `yaml:"panes"`   // sub-layer: press Key, then Kill or Rename
+	Prefix       string       `yaml:"prefix"` // enters command mode
+	Lock         string       `yaml:"lock"`   // toggles lock mode, prefix or not
+	NextWindow   string       `yaml:"next_window"`
+	PrevWindow   string       `yaml:"prev_window"`
+	CyclePane    string       `yaml:"cycle_pane"`    // move to the next pane in tree order
+	NewPane      string       `yaml:"new_pane"`      // split along whichever axis has more room
+	SplitHoriz   string       `yaml:"split_horiz"`   // side by side
+	SplitVert    string       `yaml:"split_vert"`    // top to bottom
+	Zoom         string       `yaml:"zoom"`          // grow the active pane to fill the window
+	Float        string       `yaml:"float"`         // toggle the centered floating terminal
+	Swap         string       `yaml:"swap"`          // arm swap mode: drag one pane onto another to trade places
+	Preset       string       `yaml:"preset"`        // save the current layout as a named preset
+	LoadPreset   string       `yaml:"load_preset"`   // opens the preset picker to restore a saved layout
+	DeletePreset string       `yaml:"delete_preset"` // inside the preset picker, deletes the highlighted preset
+	Theme        string       `yaml:"theme"`         // opens the colorscheme picker
+	Reload       string       `yaml:"reload"`        // re-reads config.yaml from disk
+	Detach       string       `yaml:"detach"`
+	Quit         string       `yaml:"quit"`
+	Windows      windowLayer  `yaml:"windows"`  // sub-layer: press Key, then New, Kill or Rename
+	Panes        paneLayer    `yaml:"panes"`    // sub-layer: press Key, then Kill, Rename, Picker or Stack
+	Sessions     sessionLayer `yaml:"sessions"` // sub-layer: press Key, then Delete, Rename or CloseOthers
 }
 
 // windowLayer is the "w" sub-layer: press Key to open it, then New, Kill,
@@ -49,13 +49,30 @@ type windowLayer struct {
 }
 
 // paneLayer is the "p" sub-layer: press Key to open it, then Kill, Rename,
-// or Picker to act on panes. A blank Kill/Rename/Picker leaves that action
-// out of the layer entirely, rather than collapsing to Key alone.
+// Picker or Stack to act on panes. A blank Kill/Rename/Picker/Stack leaves
+// that action out of the layer entirely, rather than collapsing to Key
+// alone.
 type paneLayer struct {
 	Key    string `yaml:"key"`    // leader that opens the layer, e.g. "p"
 	Kill   string `yaml:"kill"`   // kill the active pane
 	Rename string `yaml:"rename"` // rename the active pane
 	Picker string `yaml:"picker"` // opens the floating pane picker
+	Stack  string `yaml:"stack"`  // layer a new pane behind the active one
+}
+
+// sessionLayer is the "s" sub-layer: press Key to open it, then New,
+// Delete, Rename, CloseOthers or Picker to act on sessions — each one a
+// wholly separate daemon with its own socket, windows and panes, the same
+// thing "tile ls" lists and "-t name" targets. A blank
+// New/Delete/Rename/CloseOthers/Picker leaves that action out of the layer
+// entirely, rather than collapsing to Key alone.
+type sessionLayer struct {
+	Key         string `yaml:"key"`          // leader that opens the layer, e.g. "s"
+	New         string `yaml:"new"`          // create a new session and switch to it
+	Delete      string `yaml:"delete"`       // kill this session's daemon and every shell in it (asks first)
+	Rename      string `yaml:"rename"`       // rename this session
+	CloseOthers string `yaml:"close_others"` // kill every other running session
+	Picker      string `yaml:"picker"`       // opens a picker to switch to another running session
 }
 
 var defaultKeymap = keymap{
@@ -67,7 +84,6 @@ var defaultKeymap = keymap{
 	NewPane:      "a",
 	SplitHoriz:   "|",
 	SplitVert:    "-",
-	Stack:        "s",
 	Zoom:         "z",
 	Float:        "f",
 	Swap:         "m",
@@ -79,7 +95,8 @@ var defaultKeymap = keymap{
 	Detach:       "d",
 	Quit:         "q",
 	Windows:      windowLayer{Key: "w", New: "c", Kill: "&", Rename: "r"},
-	Panes:        paneLayer{Key: "p", Kill: "x", Rename: "r", Picker: "p"},
+	Panes:        paneLayer{Key: "p", Kill: "x", Rename: "r", Picker: "p", Stack: "s"},
+	Sessions:     sessionLayer{Key: "s", New: "n", Delete: "x", Rename: "r", CloseOthers: "o", Picker: "p"},
 }
 
 // helpEntry pairs one remappable action's label with its currently bound
@@ -101,7 +118,6 @@ func actionEntries(km keymap) []helpEntry {
 		{km.NewPane, "new pane (auto direction)"},
 		{km.SplitHoriz, "split side-by-side"},
 		{km.SplitVert, "split top-to-bottom"},
-		{km.Stack, "stack a pane"},
 		{km.Zoom, "zoom the active pane"},
 		{km.Float, "toggle floating terminal"},
 		{km.Swap, "swap two panes (click + drag)"},
@@ -119,6 +135,12 @@ func actionEntries(km keymap) []helpEntry {
 		{km.Panes.Key, km.Panes.Kill, "kill pane"},
 		{km.Panes.Key, km.Panes.Rename, "rename pane"},
 		{km.Panes.Key, km.Panes.Picker, "pane picker"},
+		{km.Panes.Key, km.Panes.Stack, "stack a pane"},
+		{km.Sessions.Key, km.Sessions.New, "new session"},
+		{km.Sessions.Key, km.Sessions.Delete, "delete session"},
+		{km.Sessions.Key, km.Sessions.Rename, "rename session"},
+		{km.Sessions.Key, km.Sessions.CloseOthers, "close other sessions"},
+		{km.Sessions.Key, km.Sessions.Picker, "switch session"},
 	} {
 		if sub.leaf != "" {
 			entries = append(entries, helpEntry{sub.leader + sub.leaf, sub.desc})

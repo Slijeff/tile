@@ -35,7 +35,6 @@ The prefix is **Ctrl+B**. Press it, then:
 | `]` `[` / `0`–`9` | next / previous window / select by number |
 | `a` | new pane, auto-splitting whichever axis has more room |
 | `|` / `-` | split side-by-side / split top-to-bottom |
-| `s` | stack a pane behind the active one |
 | `z` | zoom the active pane to fill the window, or restore it |
 | `f` | toggle a floating terminal in the center of the window |
 | `o` / arrows | cycle panes / move to the pane in that direction |
@@ -46,6 +45,12 @@ The prefix is **Ctrl+B**. Press it, then:
 | `p` `x` | kill the active pane |
 | `p` `r` | rename the active pane |
 | `p` `p` | open the floating pane picker |
+| `p` `s` | stack a pane behind the active one |
+| `s` `n` | create a new session and switch to it |
+| `s` `x` | delete this session and every shell in it, after confirming |
+| `s` `r` | rename this session |
+| `s` `o` | close every other running session |
+| `s` `p` | open a picker to switch to another running session |
 | `S` | save the current layout to a named preset |
 | `L` | load a saved preset |
 | `T` | open the colorscheme picker |
@@ -85,7 +90,7 @@ whatever the shell called it, and later commands leave that name alone.
 [Renaming panes](#renaming-panes).
 
 A **split** (`|` / `-`) divides the screen; both panes stay visible side by
-side. A **stack** (`s`) does not divide anything — the new pane shares the
+side. A **stack** (`p` `s`) does not divide anything — the new pane shares the
 exact same rect as the one it was stacked behind, like a new layer in an
 image editor. Only one layer runs full-speed rendering at a time, but every
 other layer still leaves a one-row title bar on screen, stacked above or
@@ -148,6 +153,45 @@ cancels. Once renamed, the tab keeps that name regardless of which pane is
 active or what runs in it, until you rename it again with a blank name,
 which reverts to following the active pane's title.
 
+### Sessions
+
+Each session — the unit `tile ls` lists and `-t name` targets — is a wholly
+separate daemon with its own windows and panes; `s` `n`/`s` `x`/`s` `r`/`s`
+`o`/`s` `p` reach five things worth doing to one without dropping back to a
+shell prompt.
+
+`s` `n` creates a new session under an automatically chosen name
+(`session-1`, `session-2`, …, the first one nothing else is using) and
+switches to it, the same detach-and-reattach `s` `p` uses — just aimed at
+a name nothing is listening on yet, so the CLI starts a fresh daemon for
+it instead of reattaching to an existing one. Rename it afterward with
+`s` `r` if the auto-picked name isn't the one you want.
+
+`s` `r` opens a rename prompt over the layout the same way `p` `r`/`w` `r`
+do, seeded with the session's current name (`default` if it was never
+given one); type a new one and `Enter` confirms it, `Esc` cancels. Unlike a
+pane or window rename, a blank commit is a no-op rather than a revert —
+a session has no auto-tracked name to fall back to. Renaming takes effect
+immediately: every future `tile -t <name>` finds the session under its new
+name, `tile ls` included.
+
+`s` `x` deletes the current session: same as `q`, it stops the daemon and
+every shell in it, so it asks first the same way — `y` goes through with
+it, any other key backs out.
+
+`s` `o` closes every *other* running session — every daemon `tile ls`
+would list besides this one — without asking: it can never take down the
+session you're looking at, so there's nothing here for a confirmation to
+guard.
+
+`s` `p` opens a picker listing every running session, the same way `p` `p`
+lists panes: `↑`/`↓` (or `j`/`k`) move the highlight, which starts on the
+current session's own entry (marked `(current)`). `Enter` switches to the
+highlighted session — detaching from this one and reattaching to the
+other, exactly like running `tile -t <name>` from a shell, just without
+leaving the terminal you're already in — or does nothing if it's the one
+you're already attached to. `Esc`/`q` cancels.
+
 ### Pane picker
 
 `p` `p` opens a floating pane picker over the current layout: every window
@@ -176,8 +220,8 @@ than replacing it, so loading one never throws away work in progress. `x`
 deletes the highlighted preset from disk instead — with a confirmation
 nowhere in sight, so double-check the highlight before pressing it; deleting
 the last one closes the picker rather than leaving it open on an empty list.
-Presets are stored in `~/.config/tile/presets.yaml`, alongside
-`config.yaml`.
+Presets are stored in `presets.yaml` alongside `config.yaml`, in the same
+`$XDG_CONFIG_HOME/tile` (or `~/.config/tile`) directory.
 
 ### Quitting
 
@@ -209,7 +253,8 @@ picker only skins tile's own chrome.
 ## Configuration
 
 Theme, keymap and the pane margin are all read from
-`~/.config/tile/config.yaml` (same path on macOS and Linux). The daemon
+`$XDG_CONFIG_HOME/tile/config.yaml`, or `~/.config/tile/config.yaml` if
+`XDG_CONFIG_HOME` isn't set (same path on macOS and Linux). The daemon
 writes out the full default file the first time it starts, so every setting
 is listed explicitly and ready to edit:
 
@@ -225,7 +270,6 @@ keymap:
   new_pane: a
   split_horiz: "|"
   split_vert: "-"
-  stack: s
   zoom: z
   float: f
   preset: S
@@ -245,17 +289,28 @@ keymap:
     kill: x
     rename: r
     picker: p
+    stack: s
+  sessions:
+    key: s
+    new: n
+    delete: x
+    rename: r
+    close_others: o
+    picker: p
 ```
 
 `theme` is one of the four [Catppuccin](https://catppuccin.com) flavor names
 (Latte, Frappé, Macchiato, Mocha). Under `keymap`, `prefix` and `lock` accept
 an optional `ctrl+`/`alt+`/`shift+` modifier before the key; every other
-top-level binding is one character. `windows` and `panes` are nested
-sub-layers: `key` is the leader that opens each, and its other fields are
-the one-character actions reached after pressing it (`new`, `kill`,
-`rename` for windows; `kill`, `rename`, `picker` for panes) — leave any of
-them blank to drop that action from the layer. Press `reload` (`R` by
-default) after editing to apply changes live, no restart needed.
+top-level binding is one character. `windows`, `panes` and `sessions` are
+nested sub-layers: `key` is the leader that opens each, and its other
+fields are the one-character actions reached after pressing it (`new`,
+`kill`, `rename` for windows; `kill`, `rename`, `picker`, `stack` for
+panes; `new`, `delete`, `rename`, `close_others`, `picker` for sessions,
+each one acting on the whole daemon behind the attached session rather
+than a window or pane in it) — leave any of them blank to drop that action
+from the layer. Press `reload` (`R` by default) after editing to apply
+changes live, no restart needed.
 
 ## Scripting
 

@@ -7,10 +7,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// configDir is where tile keeps its config: always ~/.config/tile, on every
-// OS, rather than os.UserConfigDir's platform default (e.g. ~/Library/
-// Application Support on macOS).
+// configDir is where tile keeps its config: $XDG_CONFIG_HOME/tile if set,
+// otherwise ~/.config/tile on every OS, rather than os.UserConfigDir's
+// platform default (e.g. ~/Library/Application Support on macOS).
 func configDir() (string, error) {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "tile"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err

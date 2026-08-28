@@ -17,6 +17,12 @@ type clientModel struct {
 	dec   *json.Decoder
 	frame string
 	cur   *tea.Cursor
+
+	// switchTo is set by a MsgDetach that names a session to attach to
+	// next, sent by the sessions picker (s p) instead of a plain detach.
+	// attach()'s caller checks it once Run returns to decide whether to
+	// stop there or dial the next session.
+	switchTo string
 }
 
 type connClosedMsg struct{}
@@ -52,6 +58,7 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cur = tea.NewCursor(msg.CurX, msg.CurY)
 			}
 		case proto.MsgDetach:
+			m.switchTo = msg.Content
 			return m, tea.Quit
 		}
 		return m, m.recv

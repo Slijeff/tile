@@ -124,10 +124,12 @@ type server struct {
 	renamer *renamer    // open pane/window rename prompt, nil when closed
 	panes   *panePicker // open floating pane picker, nil when closed
 
-	presetPrompt *presetPrompt // open save-preset name prompt, nil when closed
-	presetList   *presetList   // open load-preset picker, nil when closed
+	presetPrompt *presetPrompt  // open save-preset name prompt, nil when closed
+	presetList   *presetList    // open load-preset picker, nil when closed
+	sessions     *sessionPicker // open session picker, nil when closed
 
-	quitting bool // the quit confirmation is up, waiting on a y
+	quitting        bool // the quit confirmation is up, waiting on a y
+	sessionDeleting bool // the delete-session confirmation is up, waiting on a y
 
 	tabs []tabHit // column ranges from the last frame's tab bar; mouse reads it
 }
@@ -366,16 +368,20 @@ func (s *server) frame() proto.ServerMsg {
 	switch {
 	case s.quitting:
 		body = overlayCenter(body, bd.w, bd.h, quitBox(s.theme))
+	case s.sessionDeleting:
+		body = overlayCenter(body, bd.w, bd.h, sessionDeleteBox(s.sessionName(), s.theme))
 	case s.picker != nil:
 		body = overlayCenter(body, bd.w, bd.h, pickerBox(themeNames(s.themes), s.picker.sel, s.theme))
 	case s.panes != nil:
 		body = overlayCenter(body, bd.w, bd.h, panePickerBox(s.panes, s.theme, bd.w, bd.h))
 	case s.renamer != nil:
-		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.renamer.forWindow, s.theme))
+		body = overlayCenter(body, bd.w, bd.h, renameBox(s.renamer.text, s.renamer.forWindow, s.renamer.forSession, s.theme))
 	case s.presetPrompt != nil:
 		body = overlayCenter(body, bd.w, bd.h, presetPromptBox(s.presetPrompt.text, s.theme))
 	case s.presetList != nil:
 		body = overlayCenter(body, bd.w, bd.h, presetListBox(s.presetList, s.km, s.theme))
+	case s.sessions != nil:
+		body = overlayCenter(body, bd.w, bd.h, sessionPickerBox(s.sessions, s.sessionName(), s.theme))
 	case s.swapMode:
 		body = overlay(body, bd.w, bd.h, swapPromptBox(s.km, s.theme))
 	case s.chord != "":
@@ -406,11 +412,7 @@ func (s *server) statusBar() string {
 	}
 	left := " " + mode + " "
 
-	name := s.name
-	if name == "" {
-		name = "default"
-	}
-	right := "[" + name + "]  "
+	right := "[" + s.sessionName() + "]  "
 	w := s.win()
 	if f := w.focus(); f != nil {
 		if p := f.stackAncestor(); p != nil {
