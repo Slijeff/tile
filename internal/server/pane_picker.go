@@ -122,7 +122,10 @@ func (s *server) panesKey(k tea.Key) {
 		// The picker only ever lists tiled panes, so jumping to one means
 		// leaving that window's floating terminal, if it had focus.
 		s.win().floatOn = false
-		s.win().active = row.node
+		// focusLayer, not a bare w.active =, so a stacked target also comes
+		// to the front of its stack — otherwise it's "active" but still
+		// hidden behind the visible layer.
+		s.focusLayer(row.node)
 		s.panes = nil
 	case k.Code == tea.KeyEscape || k.Text == "q":
 		s.panes = nil

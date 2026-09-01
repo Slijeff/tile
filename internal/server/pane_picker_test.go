@@ -141,6 +141,33 @@ func TestPanePickerEnterSwitchesWindowAndPane(t *testing.T) {
 	}
 }
 
+// Regression: picking a stacked pane that isn't the visible layer must bring
+// it to the front of its stack, not just set w.active — otherwise it stays
+// hidden behind the layer that was already showing and focus appears stuck.
+func TestPanePickerEnterRaisesStackedLayer(t *testing.T) {
+	stackNode := &node{dir: dirStack, weight: 1, layer: 0}
+	front := &node{weight: 1, pane: &pane{title: "front"}, parent: stackNode}
+	back := &node{weight: 1, pane: &pane{title: "back"}, parent: stackNode}
+	stackNode.children = []*node{front, back}
+	win := &window{name: "0", root: stackNode, active: front}
+
+	s := newCommandTestServer(win)
+	s.openPanePicker()
+
+	// highlight the hidden "back" layer, then Enter
+	for s.panes.rows[s.panes.cur].node != back {
+		s.panes.move(1)
+	}
+	s.panesKey(tea.Key{Code: tea.KeyEnter})
+
+	if s.win().active != back {
+		t.Fatal("Enter did not focus the stacked pane")
+	}
+	if stackNode.layer != 1 {
+		t.Fatalf("stack layer = %d after picking the back pane, want 1 (raised to front)", stackNode.layer)
+	}
+}
+
 // Esc/q must close the picker without touching the active window or pane.
 func TestPanePickerEscapeCancelsWithoutSwitching(t *testing.T) {
 	win0 := buildSplitWindow("0", "a", "b")
