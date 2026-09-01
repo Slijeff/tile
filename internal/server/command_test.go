@@ -327,9 +327,14 @@ func TestNormalizeShiftedKeyFoldsCaseForVT(t *testing.T) {
 			want: tea.Key{Code: 'r', Mod: tea.ModCtrl, Text: ""},
 		},
 		{
-			name: "shift+non-printable (empty Text) is untouched",
+			name: "shift+Tab keeps its modifier — vt encodes it as a distinct back-tab",
 			in:   tea.Key{Code: tea.KeyTab, Mod: tea.ModShift, Text: ""},
 			want: tea.Key{Code: tea.KeyTab, Mod: tea.ModShift, Text: ""},
+		},
+		{
+			name: "shift+Enter drops the modifier so vt encodes it as a plain Enter",
+			in:   tea.Key{Code: tea.KeyEnter, Mod: tea.ModShift, Text: ""},
+			want: tea.Key{Code: tea.KeyEnter, Mod: 0, Text: ""},
 		},
 	}
 	for _, c := range cases {

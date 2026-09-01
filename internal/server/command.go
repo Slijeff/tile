@@ -138,6 +138,19 @@ func normalizeShiftedKey(k tea.Key) tea.Key {
 		if r := []rune(k.Text); len(r) == 1 {
 			k.Code, k.Mod = r[0], 0
 		}
+		return k
+	}
+	// vt matches Enter/Backspace/Escape/Space by an exact Mod == 0
+	// event and has no shifted form for them (only shift+Tab, which encodes
+	// to a real back-tab, is distinct). Without the Kitty protocol a legacy
+	// terminal can't tell shift+Enter from Enter anyway, so drop the lone
+	// shift bit — otherwise the keystroke falls through vt's switch and is
+	// silently swallowed, so shift+Enter never reaches the shell.
+	if k.Mod == tea.ModShift {
+		switch k.Code {
+		case tea.KeyEnter, tea.KeyBackspace, tea.KeyEscape, tea.KeySpace:
+			k.Mod = 0
+		}
 	}
 	return k
 }
