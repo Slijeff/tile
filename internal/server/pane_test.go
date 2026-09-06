@@ -251,3 +251,23 @@ func TestTruncateTitleTruncatesLongCommand(t *testing.T) {
 		t.Fatalf("truncateTitle(%q) = %q, want it unchanged", short, got)
 	}
 }
+
+// A process that sets a real title, then clears it on exit (empty OSC title),
+// must not wipe the name that was showing — the cleared title is ignored and
+// the last real one stays.
+func TestEmptyOSCTitleDoesNotClearName(t *testing.T) {
+	p, err := newPane(0, 20, 10, make(chan event, 256))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+
+	_, _ = p.emu.Write([]byte("\x1b]2;my-project\x07"))
+	if p.title != "my-project" {
+		t.Fatalf("title = %q, want %q", p.title, "my-project")
+	}
+	_, _ = p.emu.Write([]byte("\x1b]2;\x07")) // process exits, clears the title
+	if p.title != "my-project" {
+		t.Fatalf("title = %q, an empty OSC title must not clear the name", p.title)
+	}
+}

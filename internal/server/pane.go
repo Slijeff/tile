@@ -73,7 +73,11 @@ func newPane(id, w, h int, events chan<- event) (*pane, error) {
 	}
 	// These fire from inside emu.Write, which only ever runs on the event loop.
 	p.emu.SetCallbacks(vt.Callbacks{
-		Title:            func(s string) { p.title = s },
+		// TUIs (vim, less, fzf) emit an empty OSC title on exit to hand the
+		// title back to the shell prompt. Honoring that blanks the tab until
+		// the next prompt — or forever, if the shell never sets it — wiping
+		// whatever name was showing. Keep the last non-empty title instead.
+		Title:            func(s string) { if strings.TrimSpace(s) != "" { p.title = s } },
 		CursorVisibility: func(v bool) { p.curVis = v },
 		EnableMode:       func(m ansi.Mode) { p.setMouse(m, true) },
 		DisableMode:      func(m ansi.Mode) { p.setMouse(m, false) },
