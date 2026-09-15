@@ -1,9 +1,12 @@
 package server
 
 import (
+	"fmt"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"tile/internal/proto"
 )
 
 func newCommandTestServer(win *window) *server {
@@ -341,5 +344,49 @@ func TestNormalizeShiftedKeyFoldsCaseForVT(t *testing.T) {
 		if got := normalizeShiftedKey(c.in); got != c.want {
 			t.Errorf("%s: normalizeShiftedKey(%+v) = %+v, want %+v", c.name, c.in, got, c.want)
 		}
+	}
+}
+
+// Dragging a mouse selection above a pane's top edge should scroll its
+// history back (like a wheel tick) rather than just clamping the selection
+// to row 0, and the drag's anchor should stay pinned to the same line of
+// text instead of drifting as the viewport scrolls under it.
+func TestMouseSelectionAutoScrollsPastPaneEdge(t *testing.T) {
+	events := make(chan event, 256)
+	p, err := newPane(0, 20, 8, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.close() })
+	for i := range 20 {
+		_, _ = p.emu.Write([]byte(fmt.Sprintf("row%02d\r\n", i)))
+	}
+	if p.emu.ScrollbackLen() == 0 {
+		t.Fatal("test setup: expected some scrollback")
+	}
+
+	win := &window{name: "0", root: &node{weight: 1, pane: p}, active: &node{weight: 1, pane: p}}
+	s := newCommandTestServer(win)
+
+	// Start a selection three rows into the pane, as paneMouseOff would.
+	rect := rect{x: 0, y: 1, w: 20, h: 8}
+	s.selPane, s.selRect = p, rect
+	p.selectStart(2, 3)
+
+	// Drag above the pane's top edge.
+	before := p.scroll
+	s.mouse(proto.ClientMsg{Type: proto.MsgMouse, Kind: proto.MouseMotion, Mouse: tea.Mouse{X: 2, Y: rect.y - 1}})
+
+	if p.scroll != before+scrollLines {
+		t.Fatalf("scroll = %d, want %d (one scrollLines tick)", p.scroll, before+scrollLines)
+	}
+	if !p.hasSel {
+		t.Fatal("dragging past the edge should still be an active drag selection")
+	}
+	if p.selTo.Y != 0 {
+		t.Fatalf("selTo.Y = %d, want 0 (clamped to the pane's top row)", p.selTo.Y)
+	}
+	if want := 3 + scrollLines; p.selFrom.Y != want {
+		t.Fatalf("selFrom.Y = %d, want %d (anchor shifted by the scroll so it still points at row 3's text)", p.selFrom.Y, want)
 	}
 }

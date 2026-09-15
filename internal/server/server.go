@@ -130,6 +130,9 @@ type server struct {
 	presetList   *presetList    // open load-preset picker, nil when closed
 	sessions     *sessionPicker // open session picker, nil when closed
 
+	commandForm *commandForm // open add/edit-command form, nil when closed
+	commandList *commandList // open saved-commands picker/manager, nil when closed
+
 	quitting        bool // the quit confirmation is up, waiting on a y
 	sessionDeleting bool // the delete-session confirmation is up, waiting on a y
 
@@ -384,6 +387,10 @@ func (s *server) frame() proto.ServerMsg {
 		body = overlayCenter(body, bd.w, bd.h, presetPromptBox(s.presetPrompt.text, s.theme))
 	case s.presetList != nil:
 		body = overlayCenter(body, bd.w, bd.h, presetListBox(s.presetList, s.km, s.theme))
+	case s.commandForm != nil:
+		body = overlayCenter(body, bd.w, bd.h, commandFormBox(s.commandForm, s.theme))
+	case s.commandList != nil:
+		body = overlayCenter(body, bd.w, bd.h, commandListBox(s.commandList, s.km, s.theme))
 	case s.sessions != nil:
 		body = overlayCenter(body, bd.w, bd.h, sessionPickerBox(s.sessions, s.sessionName(), s.theme))
 	case s.swapMode:

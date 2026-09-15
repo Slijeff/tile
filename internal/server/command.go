@@ -46,6 +46,14 @@ func (s *server) key(k tea.Key) {
 		s.presetListKey(k)
 		return
 	}
+	if s.commandForm != nil {
+		s.commandFormKey(k)
+		return
+	}
+	if s.commandList != nil {
+		s.commandListKey(k)
+		return
+	}
 	if s.sessions != nil {
 		s.sessionPickerKey(k)
 		return
@@ -99,6 +107,18 @@ func (s *server) paste(text string) {
 		s.renamer.text += stripNewlines(text)
 	case s.presetPrompt != nil:
 		s.presetPrompt.text += stripNewlines(text)
+	case s.commandForm != nil:
+		f := s.commandForm
+		if f.focus == fieldCmd {
+			f.fields[fieldCmd] += text // multi-line command: keep a pasted newline rather than flattening it
+		} else {
+			f.fields[f.focus] += stripNewlines(text)
+		}
+	case s.commandList != nil:
+		cl := s.commandList
+		cl.query += stripNewlines(text)
+		cl.shown = filterCommands(cl.all, cl.query)
+		cl.sel = 0
 	default:
 		if p := s.activePane(); p != nil {
 			p.scroll = 0
@@ -307,6 +327,8 @@ func (s *server) run(seq string, w *window, l *layout) bool {
 		s.openPresetPrompt()
 	case s.km.LoadPreset:
 		s.openPresetList()
+	case s.km.Commands:
+		s.openCommandList()
 	case s.km.Theme:
 		s.openPicker()
 	case s.km.Reload:
@@ -517,13 +539,29 @@ func (s *server) mouse(m proto.ClientMsg) {
 	// it started in, rather than being re-hit-tested against whatever the
 	// pointer has since wandered over.
 	if s.selPane != nil {
+		p := s.selPane
 		x := min(max(mo.X-s.selRect.x, 0), s.selRect.w-1)
-		y := min(max(mo.Y-s.selRect.y, 0), s.selRect.h-1)
+		rawY := mo.Y - s.selRect.y
+		if m.Kind == proto.MouseMotion {
+			// Dragging past the pane's top or bottom edge scrolls its
+			// history, same as a wheel tick, and shifts selFrom by however
+			// much the scroll actually moved so the anchor stays pinned to
+			// the same absolute line instead of drifting with the viewport.
+			old := p.scroll
+			switch {
+			case rawY < 0:
+				p.scrollBy(scrollLines)
+			case rawY >= s.selRect.h:
+				p.scrollBy(-scrollLines)
+			}
+			p.selFrom.Y += p.scroll - old
+		}
+		y := min(max(rawY, 0), s.selRect.h-1)
 		switch m.Kind {
 		case proto.MouseMotion:
-			s.selPane.selectExtend(x, y)
+			p.selectExtend(x, y)
 		case proto.MouseRelease:
-			if text := s.selPane.selectEnd(); text != "" {
+			if text := p.selectEnd(); text != "" {
 				s.copyToClipboard(text)
 			}
 			s.selPane = nil

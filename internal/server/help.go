@@ -27,6 +27,7 @@ func helpEntries(km keymap) []helpEntry {
 		{km.Sessions.Key, "sessions…"},
 		{km.Preset, "save preset"},
 		{km.LoadPreset, "load preset"},
+		{km.Commands, "saved commands"},
 		{km.Theme, "colorscheme picker"},
 		{km.Reload, "reload config"},
 		{km.Detach, "detach"},
