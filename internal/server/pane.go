@@ -32,6 +32,9 @@ type pane struct {
 	named      bool   // the border name has been set, either by trackCommand or a manual rename
 	borderName string // set once named; the pane's own border name, distinct from title
 
+	osc    oscState // filterTitle's progress through an OSC title, across PTY reads
+	oscBuf []byte   // the OSC payload collected so far
+
 	// Mouse text-selection, for panes whose program hasn't grabbed the
 	// mouse for itself. selFrom/selTo are pane-relative cells; selecting is
 	// true only while the button is still down, selDragged distinguishes an
@@ -72,12 +75,8 @@ func newPane(id, w, h int, events chan<- event) (*pane, error) {
 		h:      h,
 	}
 	// These fire from inside emu.Write, which only ever runs on the event loop.
+	// Titles don't come through here — see filterTitle.
 	p.emu.SetCallbacks(vt.Callbacks{
-		// TUIs (vim, less, fzf) emit an empty OSC title on exit to hand the
-		// title back to the shell prompt. Honoring that blanks the tab until
-		// the next prompt — or forever, if the shell never sets it — wiping
-		// whatever name was showing. Keep the last non-empty title instead.
-		Title:            func(s string) { if strings.TrimSpace(s) != "" { p.title = s } },
 		CursorVisibility: func(v bool) { p.curVis = v },
 		EnableMode:       func(m ansi.Mode) { p.setMouse(m, true) },
 		DisableMode:      func(m ansi.Mode) { p.setMouse(m, false) },
@@ -104,6 +103,78 @@ func newPane(id, w, h int, events chan<- event) (*pane, error) {
 		}
 	}()
 	return p, nil
+}
+
+type oscState byte
+
+const (
+	oscNone  oscState = iota
+	oscEsc            // saw ESC
+	oscTitle          // inside ESC ] — collecting the payload
+)
+
+// filterTitle pulls OSC 0/2 title sequences out of PTY output and sets
+// p.title itself, passing everything else through for the emulator. The
+// ansi parser ends an OSC at a 0x9C byte (C1 ST) even mid-UTF-8, so a
+// title like Claude Code's "✳ …" (E2 9C B3) was cut to a lone 0xE2 and
+// shown as U+FFFD. Here only BEL, ESC and CAN/SUB end the string.
+func (p *pane) filterTitle(data []byte) []byte {
+	out := make([]byte, 0, len(data))
+	for _, b := range data {
+		switch p.osc {
+		case oscNone:
+			if b == 0x1b {
+				p.osc = oscEsc
+				continue
+			}
+			out = append(out, b)
+		case oscEsc:
+			switch b {
+			case ']':
+				p.osc, p.oscBuf = oscTitle, p.oscBuf[:0]
+			case 0x1b:
+				out = append(out, 0x1b) // ESC ESC: the second may still start an OSC
+			default:
+				p.osc = oscNone
+				out = append(out, 0x1b, b)
+			}
+		case oscTitle:
+			switch {
+			case b == 0x07:
+				p.setTitle()
+				p.osc = oscNone
+			case b == 0x1b: // ESC \ (ST); the stray "\" is a no-op for the emulator
+				p.setTitle()
+				p.osc = oscEsc
+			case b == 0x18 || b == 0x1a: // CAN/SUB abort the sequence
+				p.osc = oscNone
+			default:
+				p.oscBuf = append(p.oscBuf, b)
+				// Not a title (or runaway): hand the sequence back to the
+				// emulator untouched and stop collecting.
+				if n := len(p.oscBuf); n == 2 && !isTitleOSC(p.oscBuf) || n > 4096 {
+					out = append(append(out, 0x1b, ']'), p.oscBuf...)
+					p.osc = oscNone
+				}
+			}
+		}
+	}
+	return out
+}
+
+func isTitleOSC(b []byte) bool { return (b[0] == '0' || b[0] == '2') && b[1] == ';' }
+
+// setTitle applies a finished OSC title. TUIs (vim, less, fzf) emit an empty
+// title on exit to hand it back to the shell prompt. Honoring that blanks the
+// tab until the next prompt — or forever, if the shell never sets it — wiping
+// whatever name was showing. Keep the last non-empty title instead.
+func (p *pane) setTitle() {
+	if len(p.oscBuf) < 2 || !isTitleOSC(p.oscBuf) {
+		return
+	}
+	if s := strings.ToValidUTF8(string(p.oscBuf[2:]), ""); strings.TrimSpace(s) != "" {
+		p.title = s
+	}
 }
 
 // setMouse tracks whether the program inside wants mouse events forwarded.

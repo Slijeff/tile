@@ -262,12 +262,33 @@ func TestEmptyOSCTitleDoesNotClearName(t *testing.T) {
 	}
 	defer p.close()
 
-	_, _ = p.emu.Write([]byte("\x1b]2;my-project\x07"))
+	_, _ = p.emu.Write(p.filterTitle([]byte("\x1b]2;my-project\x07")))
 	if p.title != "my-project" {
 		t.Fatalf("title = %q, want %q", p.title, "my-project")
 	}
-	_, _ = p.emu.Write([]byte("\x1b]2;\x07")) // process exits, clears the title
+	_, _ = p.emu.Write(p.filterTitle([]byte("\x1b]2;\x07"))) // process exits, clears the title
 	if p.title != "my-project" {
 		t.Fatalf("title = %q, an empty OSC title must not clear the name", p.title)
+	}
+}
+
+// Claude Code's idle title starts with "✳" (E2 9C B3). The ansi parser ends an
+// OSC at 0x9C even mid-rune, which left the tab showing "\xE2" (U+FFFD).
+// Also splits sequences across reads, as the PTY can.
+func TestTitleSurvivesC1ByteInUTF8(t *testing.T) {
+	p := &pane{title: "zsh"}
+	in := "\x1b]0;✳ Claude Code\x07hi\x1b]2;vim\x1b\\\x1b]7;file://x\x07"
+	var out []byte
+	for i := range len(in) {
+		out = append(out, p.filterTitle([]byte{in[i]})...)
+		if i == 20 && p.title != "✳ Claude Code" {
+			t.Fatalf("title = %q", p.title)
+		}
+	}
+	if p.title != "vim" {
+		t.Fatalf("title = %q, want vim", p.title)
+	}
+	if want := "hi\x1b\\\x1b]7;file://x\x07"; string(out) != want {
+		t.Fatalf("passthrough = %q, want %q", out, want)
 	}
 }

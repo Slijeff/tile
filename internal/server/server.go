@@ -249,7 +249,7 @@ func (s *server) handle(e event) {
 		// While scrolled back, keep the viewport pinned to the same history
 		// instead of drifting as new lines push into the scrollback buffer.
 		before := e.pane.emu.ScrollbackLen()
-		_, _ = e.pane.emu.Write(e.data)
+		_, _ = e.pane.emu.Write(e.pane.filterTitle(e.data))
 		if e.pane.scroll > 0 {
 			e.pane.scroll += e.pane.emu.ScrollbackLen() - before
 		}
