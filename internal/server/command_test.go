@@ -335,9 +335,14 @@ func TestNormalizeShiftedKeyFoldsCaseForVT(t *testing.T) {
 			want: tea.Key{Code: tea.KeyTab, Mod: tea.ModShift, Text: ""},
 		},
 		{
-			name: "shift+Enter drops the modifier so vt encodes it as a plain Enter",
+			name: "shift+Enter becomes alt+Enter so vt sends ESC CR (newline, not submit)",
 			in:   tea.Key{Code: tea.KeyEnter, Mod: tea.ModShift, Text: ""},
-			want: tea.Key{Code: tea.KeyEnter, Mod: 0, Text: ""},
+			want: tea.Key{Code: tea.KeyEnter, Mod: tea.ModAlt, Text: ""},
+		},
+		{
+			name: "opt+shift+Enter with caps lock still becomes alt+Enter",
+			in:   tea.Key{Code: tea.KeyEnter, Mod: tea.ModShift | tea.ModAlt | tea.ModCapsLock},
+			want: tea.Key{Code: tea.KeyEnter, Mod: tea.ModAlt},
 		},
 	}
 	for _, c := range cases {

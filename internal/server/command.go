@@ -160,15 +160,24 @@ func normalizeShiftedKey(k tea.Key) tea.Key {
 		}
 		return k
 	}
-	// vt matches Enter/Backspace/Escape/Space by an exact Mod == 0
-	// event and has no shifted form for them (only shift+Tab, which encodes
-	// to a real back-tab, is distinct). Without the Kitty protocol a legacy
-	// terminal can't tell shift+Enter from Enter anyway, so drop the lone
-	// shift bit — otherwise the keystroke falls through vt's switch and is
-	// silently swallowed, so shift+Enter never reaches the shell.
+	// shift+Enter and opt/alt+Enter both mean "newline, don't submit" to
+	// line editors like Claude Code, Codex, and zsh. vt has no Kitty
+	// protocol, so encode either as the legacy ESC CR (what iTerm2's and
+	// VS Code's newline bindings send) rather than a bare CR that submits.
+	// Lock bits (caps/num) are ignored so they can't knock it off the path.
+	if k.Code == tea.KeyEnter {
+		if m := k.Mod &^ (tea.ModCapsLock | tea.ModNumLock | tea.ModScrollLock); m == tea.ModShift || m == tea.ModAlt || m == tea.ModShift|tea.ModAlt {
+			k.Mod = tea.ModAlt
+			return k
+		}
+	}
+	// vt matches Backspace/Escape/Space by an exact Mod == 0 event and has
+	// no shifted form for them (only shift+Tab, which encodes to a real
+	// back-tab, is distinct), so drop the lone shift bit — otherwise the
+	// keystroke falls through vt's switch and is silently swallowed.
 	if k.Mod == tea.ModShift {
 		switch k.Code {
-		case tea.KeyEnter, tea.KeyBackspace, tea.KeyEscape, tea.KeySpace:
+		case tea.KeyBackspace, tea.KeyEscape, tea.KeySpace:
 			k.Mod = 0
 		}
 	}
