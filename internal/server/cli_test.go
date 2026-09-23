@@ -12,7 +12,7 @@ import (
 // PTY and emulator, so close, SendKey and the scrollback all behave.
 func testPane(t *testing.T, id int) *pane {
 	t.Helper()
-	p, err := newPane(id, 40, 10, make(chan event, 256))
+	p, err := newPane(id, 40, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

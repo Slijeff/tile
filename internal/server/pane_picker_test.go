@@ -206,12 +206,12 @@ func TestPaneChordOpensPanePicker(t *testing.T) {
 // The rendered box must stay within the given bounds and show both the
 // highlighted pane's tree row and its preview name, side by side.
 func TestPanePickerBoxFitsBoundsAndShowsPreview(t *testing.T) {
-	leftPane, err := newPane(0, 20, 10, make(chan event, 256))
+	leftPane, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer leftPane.close()
-	rightPane, err := newPane(1, 20, 10, make(chan event, 256))
+	rightPane, err := newPane(1, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,17 +261,17 @@ func TestPanePickerBoxFitsBoundsAndShowsPreview(t *testing.T) {
 // picker (it did: split "|" then "-" on an 80x24 terminal made the picker
 // vanish entirely).
 func TestPanePickerBoxFitsNestedSplitBranchAt80Columns(t *testing.T) {
-	leftPane, err := newPane(0, 20, 10, make(chan event, 256))
+	leftPane, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer leftPane.close()
-	topPane, err := newPane(1, 20, 10, make(chan event, 256))
+	topPane, err := newPane(1, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer topPane.close()
-	bottomPane, err := newPane(2, 20, 10, make(chan event, 256))
+	bottomPane, err := newPane(2, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

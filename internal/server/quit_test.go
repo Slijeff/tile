@@ -11,7 +11,7 @@ import (
 // confirmation instead of acting: nothing is torn down until the y arrives.
 func TestQuitAsksBeforeShuttingDown(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 6, events)
+	p, err := newPane(0, 20, 6, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestQuitDialogCancelsOnAnythingButY(t *testing.T) {
 // shell, so the y that confirms can't also be typed into a pane.
 func TestQuitDialogSwallowsKeysAndDrawsItself(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 6, events)
+	p, err := newPane(0, 20, 6, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

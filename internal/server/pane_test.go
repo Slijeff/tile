@@ -2,8 +2,10 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -15,7 +17,7 @@ import (
 // dropped. shrinkHeight must instead push the true old rows into scrollback
 // and keep the recent, cursor-bearing rows live.
 func TestResizeShrinkPreservesContent(t *testing.T) {
-	p, err := newPane(0, 20, 10, make(chan event, 256))
+	p, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +51,7 @@ func TestResizeShrinkPreservesContent(t *testing.T) {
 // Alternate-screen apps (vim, less) redraw themselves on SIGWINCH and don't
 // use scrollback; shrinkHeight must leave vt's own resize alone there.
 func TestResizeShrinkSkipsAltScreen(t *testing.T) {
-	p, err := newPane(0, 20, 10, make(chan event, 256))
+	p, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestResizeShrinkSkipsAltScreen(t *testing.T) {
 // Multiple shrinks in a row (a real mouse drag reports many intermediate
 // sizes) must accumulate correctly rather than losing or duplicating lines.
 func TestResizeShrinkSequenceAccumulates(t *testing.T) {
-	p, err := newPane(0, 20, 10, make(chan event, 256))
+	p, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +107,7 @@ func TestResizeShrinkSequenceAccumulates(t *testing.T) {
 // (inflated) height: dropping p.h-h rows off the top in that case would
 // discard the real content and keep the blank padding below it instead.
 func TestResizeShrinkAfterGrowPastContentPreservesContent(t *testing.T) {
-	p, err := newPane(0, 19, 9, make(chan event, 256))
+	p, err := newPane(0, 19, 9, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +258,7 @@ func TestTruncateTitleTruncatesLongCommand(t *testing.T) {
 // must not wipe the name that was showing — the cleared title is ignored and
 // the last real one stays.
 func TestEmptyOSCTitleDoesNotClearName(t *testing.T) {
-	p, err := newPane(0, 20, 10, make(chan event, 256))
+	p, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,5 +292,50 @@ func TestTitleSurvivesC1ByteInUTF8(t *testing.T) {
 	}
 	if want := "hi\x1b\\\x1b]7;file://x\x07"; string(out) != want {
 		t.Fatalf("passthrough = %q, want %q", out, want)
+	}
+}
+
+// A program that stops reading its input fills the PTY's small kernel
+// buffer. feed must keep draining the emulator's pipe anyway, or the event
+// loop's next SendKey/Paste into it blocks and freezes every pane.
+func TestFeedNeverBlocksOnStalledReader(t *testing.T) {
+	pr, pw := io.Pipe()
+	stall := make(chan struct{})
+	defer close(stall)
+	go feed(writerFunc(func(b []byte) (int, error) { <-stall; return len(b), nil }), pr)
+
+	done := make(chan struct{})
+	go func() {
+		chunk := make([]byte, 64*1024)
+		for range 16 { // 1 MB, far past any PTY buffer
+			_, _ = pw.Write(chunk)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writes into the pipe blocked on a stalled destination")
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
+
+// A shell inside a pane learns its session (by socket inode) and pane id from
+// the environment, which is how a bare "tile list" there finds the right
+// session.
+func TestPaneEnvNamesSessionAndPane(t *testing.T) {
+	p, err := newPane(7, 40, 10, make(chan event, 256), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	env := strings.Join(p.cmd.Env, "\n")
+	for _, want := range []string{"TILE_SESSION_INO=42", "TILE_PANE=%7"} {
+		if !strings.Contains(env, want+"\n") && !strings.HasSuffix(env, want) {
+			t.Fatalf("pane env missing %q", want)
+		}
 	}
 }

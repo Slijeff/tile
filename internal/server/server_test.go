@@ -133,7 +133,7 @@ func TestArrowStillMovesFocusBetweenSplitPanes(t *testing.T) {
 // off again.
 func TestZoomFillsBodyAndRestoresOnExit(t *testing.T) {
 	events := make(chan event, 256)
-	left, err := newPane(0, 10, 10, events)
+	left, err := newPane(0, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestZoomFillsBodyAndRestoresOnExit(t *testing.T) {
 		t.Fatal("split should have room in a 40-wide rect")
 	}
 	leftLeaf := root.children[0] // split converts root in place; the original pane moved here
-	rp, err := newPane(1, 10, 10, events)
+	rp, err := newPane(1, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestZoomFillsBodyAndRestoresOnExit(t *testing.T) {
 // hit-test the (hidden) tree geometry and steal focus.
 func TestMouseIgnoresTreeHitTestingWhileZoomed(t *testing.T) {
 	events := make(chan event, 256)
-	left, err := newPane(0, 10, 10, events)
+	left, err := newPane(0, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestMouseIgnoresTreeHitTestingWhileZoomed(t *testing.T) {
 		t.Fatal("split should have room in a 40-wide rect")
 	}
 	leftLeaf := root.children[0] // split converts root in place; the original pane moved here
-	rp, err := newPane(1, 10, 10, events)
+	rp, err := newPane(1, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestMouseIgnoresTreeHitTestingWhileZoomed(t *testing.T) {
 // active layer afterward.
 func TestClickHeaderFocusesStackLayer(t *testing.T) {
 	events := make(chan event, 256)
-	bottom, err := newPane(0, 10, 10, events)
+	bottom, err := newPane(0, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestClickHeaderFocusesStackLayer(t *testing.T) {
 
 	root := &node{pane: bottom, weight: 1}
 	b := stack(root) // root becomes a 2-layer stack; b is the active (2nd) layer
-	top, err := newPane(1, 10, 10, events)
+	top, err := newPane(1, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestClickHeaderFocusesStackLayer(t *testing.T) {
 // both focus the pane and be forwarded to the program.
 func TestClickFocusesMouseAwarePane(t *testing.T) {
 	events := make(chan event, 256)
-	left, err := newPane(0, 10, 10, events)
+	left, err := newPane(0, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestClickFocusesMouseAwarePane(t *testing.T) {
 		t.Fatal("split should have room in a 40-wide rect")
 	}
 	leftLeaf := root.children[0] // split converts root in place; the original pane moved here
-	rp, err := newPane(1, 10, 10, events)
+	rp, err := newPane(1, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestClickFocusesMouseAwarePane(t *testing.T) {
 // swap mode so a third click resumes normal behavior.
 func TestSwapModeTradesTwoPanesOnDrag(t *testing.T) {
 	events := make(chan event, 256)
-	left, err := newPane(0, 10, 10, events)
+	left, err := newPane(0, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestSwapModeTradesTwoPanesOnDrag(t *testing.T) {
 		t.Fatal("split should have room in a 40-wide rect")
 	}
 	leftLeaf := root.children[0] // split converts root in place; the original pane moved here
-	rp, err := newPane(1, 10, 10, events)
+	rp, err := newPane(1, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestSwapModeTradesTwoPanesOnDrag(t *testing.T) {
 // attached client to put on the system clipboard.
 func TestMouseDragSelectsAndCopies(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 10, events)
+	p, err := newPane(0, 20, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestMouseDragSelectsAndCopies(t *testing.T) {
 // or copy anything — it should behave exactly as it always has: focus.
 func TestMouseClickWithoutDragDoesNotSelect(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 10, events)
+	p, err := newPane(0, 20, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestMouseClickWithoutDragDoesNotSelect(t *testing.T) {
 // so the user can retry without pressing the keybind again.
 func TestSwapModeReleaseOnSourceCancelsPick(t *testing.T) {
 	events := make(chan event, 256)
-	left, err := newPane(0, 10, 10, events)
+	left, err := newPane(0, 10, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,5 +450,17 @@ func TestSwapModeReleaseOnSourceCancelsPick(t *testing.T) {
 	}
 	if s.swapSrc != nil || s.hover != nil {
 		t.Fatal("releasing on the source pane should clear the pending pick")
+	}
+}
+
+// A frame dropped on a full client queue must leave the screen dirty, or the
+// last frame of a burst is never sent and the client shows a stale screen.
+func TestClientSendReportsDrop(t *testing.T) {
+	c := &client{out: make(chan proto.ServerMsg, 1)}
+	if !c.send(proto.ServerMsg{}) {
+		t.Fatal("send into an empty queue should report queued")
+	}
+	if c.send(proto.ServerMsg{}) {
+		t.Fatal("send into a full queue should report dropped")
 	}
 }

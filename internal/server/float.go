@@ -66,7 +66,7 @@ func (s *server) toggleFloat() {
 		return
 	}
 	r := contentRect(floatRect(s.body()))
-	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events)
+	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events, s.sockIno)
 	if err != nil {
 		return
 	}

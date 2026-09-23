@@ -1,11 +1,13 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,10 +57,19 @@ func shellPath() string {
 }
 
 // newPane starts a shell on a new PTY and wires it to the event loop.
-func newPane(id, w, h int, events chan<- event) (*pane, error) {
+// TILE_SESSION_INO and TILE_PANE tell whatever runs inside where it is, so
+// a bare "tile list" there targets this session rather than "default", and
+// "tile" there refuses to attach the session to itself. The session goes by
+// its socket's inode rather than its name, since env is fixed at spawn and
+// a name would go stale on the first session rename. sockIno 0 (tests)
+// leaves it out.
+func newPane(id, w, h int, events chan<- event, sockIno uint64) (*pane, error) {
 	sh := shellPath()
 	cmd := exec.Command(sh)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", fmt.Sprintf("TILE_PANE=%%%d", id))
+	if sockIno != 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TILE_SESSION_INO=%d", sockIno))
+	}
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
 	if err != nil {
 		return nil, err
@@ -82,12 +93,10 @@ func newPane(id, w, h int, events chan<- event) (*pane, error) {
 		DisableMode:      func(m ansi.Mode) { p.setMouse(m, false) },
 	})
 
-	// Keystrokes and device replies the emulator produces, on their way to the
-	// shell. This must be running before any SendKey: the emulator writes them
-	// into an io.Pipe, which blocks until somebody reads.
-	// ponytail: a shell that stops reading its PTY can therefore stall the
-	// event loop on the next keystroke. Buffer the writes if that ever bites.
-	go func() { _, _ = io.Copy(ptmx, p.emu) }()
+	// Keystrokes, pastes and device replies the emulator produces, on their
+	// way to the shell. This must be running before any SendKey: the emulator
+	// writes them into an io.Pipe, which blocks until somebody reads.
+	go feed(ptmx, p.emu)
 
 	go func() {
 		buf := make([]byte, 32*1024)
@@ -103,6 +112,50 @@ func newPane(id, w, h int, events chan<- event) (*pane, error) {
 		}
 	}()
 	return p, nil
+}
+
+// feed copies src to dst through an unbounded queue, so src's writer never
+// waits on dst. src is the emulator's input pipe, written from the event
+// loop; dst is the PTY, whose kernel input buffer is only a few KB and
+// stays full for as long as the program inside isn't reading (a busy
+// build, output paused with Ctrl+S). A plain io.Copy there let one such
+// pane stall the event loop — and with it every pane — on the next
+// keystroke or paste.
+// ponytail: unbounded, so a pane that never reads again holds whatever is
+// typed into it until it closes. Cap it if that ever matters.
+func feed(dst io.Writer, src io.Reader) {
+	var (
+		mu   sync.Mutex
+		cond = sync.NewCond(&mu)
+		q    []byte
+		done bool
+	)
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := src.Read(buf)
+			mu.Lock()
+			q = append(q, buf[:n]...)
+			done = err != nil
+			mu.Unlock()
+			cond.Signal()
+			if err != nil {
+				return
+			}
+		}
+	}()
+	for {
+		mu.Lock()
+		for len(q) == 0 && !done {
+			cond.Wait()
+		}
+		b, last := q, done
+		q = nil
+		mu.Unlock()
+		if _, err := dst.Write(b); err != nil || last {
+			return
+		}
+	}
 }
 
 type oscState byte

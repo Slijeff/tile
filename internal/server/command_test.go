@@ -76,12 +76,12 @@ func TestPaneChordOpensRenamerForActivePane(t *testing.T) {
 
 // p+x kills the active pane, same action the old single-key "kill_pane" ran.
 func TestPaneChordKillsActivePane(t *testing.T) {
-	leftPane, err := newPane(0, 20, 10, make(chan event, 256))
+	leftPane, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer leftPane.close()
-	rightPane, err := newPane(1, 20, 10, make(chan event, 256))
+	rightPane, err := newPane(1, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,12 +157,12 @@ func TestWindowChordCreatesNewWindow(t *testing.T) {
 // w+& kills the active window, same action the old single-key
 // "kill_window" ran.
 func TestWindowChordKillsActiveWindow(t *testing.T) {
-	p0, err := newPane(0, 20, 10, make(chan event, 256))
+	p0, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p0.close()
-	p1, err := newPane(1, 20, 10, make(chan event, 256))
+	p1, err := newPane(1, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestEscapeCancelsPendingChord(t *testing.T) {
 // completing key falls through to the "not in prefix mode" branch and gets
 // typed into the shell instead of finishing the chord.
 func TestKeyRoutesThroughFullChordNotJustFirstKey(t *testing.T) {
-	p, err := newPane(0, 20, 10, make(chan event, 256))
+	p, err := newPane(0, 20, 10, make(chan event, 256), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestNormalizeShiftedKeyFoldsCaseForVT(t *testing.T) {
 // text instead of drifting as the viewport scrolls under it.
 func TestMouseSelectionAutoScrollsPastPaneEdge(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 8, events)
+	p, err := newPane(0, 20, 8, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +22,12 @@ import (
 
 func main() {
 	name, explicit, rest := splitSession(os.Args[1:])
+	// Inside a pane, the pane's own session is the default, not "default".
+	// It isn't explicit, so a bare kill-server still means every session.
+	inside, isInside := insideSession()
+	if !explicit && isInside {
+		name = inside
+	}
 	cmd := ""
 	if len(rest) > 0 {
 		cmd = rest[0]
@@ -28,6 +35,12 @@ func main() {
 	var err error
 	switch cmd {
 	case "", "attach":
+		if isInside && sessionOrDefault(name) == sessionOrDefault(inside) {
+			// Attaching would take the session over from the terminal this
+			// pane is drawn in, leaving it running invisibly inside itself.
+			err = fmt.Errorf("already inside session %q", sessionOrDefault(inside))
+			break
+		}
 		err = attach(name)
 	case "__server": // internal: the daemon itself, given its session name as argv[1]
 		err = server.RunServer(rest[1])
@@ -47,6 +60,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "tile:", err)
 		os.Exit(1)
 	}
+}
+
+// insideSession reports the session this process runs in, if it runs in a
+// tile pane, by its current name: the pane knows it only by socket inode,
+// which a session rename leaves alone.
+func insideSession() (string, bool) {
+	ino, err := strconv.ParseUint(os.Getenv("TILE_SESSION_INO"), 10, 64)
+	if err != nil {
+		return "", false
+	}
+	return proto.SessionByIno(ino)
 }
 
 // splitSession pulls "-t name" / "--session name" / "--session=name" out of

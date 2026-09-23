@@ -324,6 +324,10 @@ Panes are addressed as `%<id>`, windows as `@<id>`, both printed by
 number, and unlike a position in the tab bar an id does not shift when
 something before it closes.
 
+Run from inside a pane, these default to that pane's own session rather
+than `default`, even after the session is renamed, and `$TILE_PANE` holds the
+pane's own id — so an agent can find where it is running without being told.
+
 ```
 tile list [--json]               every window and pane
 tile capture   %p [--lines N]    a pane's text, no escape codes

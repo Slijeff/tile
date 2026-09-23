@@ -108,7 +108,7 @@ func (s *server) applyPreset(pr preset) {
 		l := s.layoutNow()
 		for _, pl := range pending {
 			r := l.rects[pl.node]
-			p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events)
+			p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events, s.sockIno)
 			if err != nil {
 				continue
 			}

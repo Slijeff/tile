@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -100,6 +101,37 @@ func SocketPath(name string) (string, error) {
 		name = "default"
 	}
 	return filepath.Join(dir, name+".sock"), nil
+}
+
+// SocketIno returns the inode of a session's socket file. Renaming a session
+// renames its socket, which keeps the inode, so unlike the name this still
+// identifies the session after any number of renames.
+func SocketIno(path string) (uint64, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(fi.Sys().(*syscall.Stat_t).Ino), nil
+}
+
+// SessionByIno returns the current name of the session whose socket has the
+// given inode, which is how a pane finds its own session after a rename.
+func SessionByIno(ino uint64) (string, bool) {
+	dir, err := SessionDir()
+	if err != nil {
+		return "", false
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".sock")
+		if !ok {
+			continue
+		}
+		if i, err := SocketIno(filepath.Join(dir, e.Name())); err == nil && i == ino {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // Sessions lists the names of every session with a server currently

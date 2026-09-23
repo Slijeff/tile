@@ -243,7 +243,7 @@ func TestFilterCommandsUsesFzfFuzzyMatchingWhenAvailable(t *testing.T) {
 // command itself followed by Enter, into the active pane's shell.
 func TestRunSavedCommandSendsCdThenCommand(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 40, 10, events)
+	p, err := newPane(0, 40, 10, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

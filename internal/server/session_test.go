@@ -37,7 +37,7 @@ func TestStackMovedUnderPanesLayer(t *testing.T) {
 	}
 
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 6, events)
+	p, err := newPane(0, 20, 6, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestStackMovedUnderPanesLayer(t *testing.T) {
 // like Quit's — mirrors TestQuitAsksBeforeShuttingDown.
 func TestSessionDeleteAsksBeforeShuttingDown(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 6, events)
+	p, err := newPane(0, 20, 6, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSessionDeleteDialogCancelsOnAnythingButY(t *testing.T) {
 // While the dialog is up it is modal, same as quit's.
 func TestSessionDeleteDialogSwallowsKeysAndDrawsItself(t *testing.T) {
 	events := make(chan event, 256)
-	p, err := newPane(0, 20, 6, events)
+	p, err := newPane(0, 20, 6, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

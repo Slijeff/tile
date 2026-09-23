@@ -384,7 +384,7 @@ func (s *server) split(d dir) {
 	// Lay out again so the new pane's shell starts at its real size.
 	l := s.layoutNow()
 	r := l.rects[n]
-	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events)
+	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events, s.sockIno)
 	if err != nil {
 		closeNode(n)
 		s.layoutNow()
@@ -409,7 +409,7 @@ func (s *server) stack() {
 	n := stack(w.focus())
 	l := relayout()
 	r := l.rects[n]
-	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events)
+	p, err := newPane(s.nextID, max(r.w, 1), max(r.h, 1), s.events, s.sockIno)
 	if err != nil {
 		closeNode(n)
 		relayout()

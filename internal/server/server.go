@@ -37,11 +37,14 @@ type client struct {
 	out  chan proto.ServerMsg
 }
 
-// send drops the frame rather than blocking the event loop on a slow client.
-func (c *client) send(m proto.ServerMsg) {
+// send drops the frame rather than blocking the event loop on a slow client,
+// reporting whether it was queued.
+func (c *client) send(m proto.ServerMsg) bool {
 	select {
 	case c.out <- m:
+		return true
 	default:
+		return false
 	}
 }
 
@@ -95,6 +98,7 @@ func (w *window) rename(name string) {
 type server struct {
 	name     string // session name, shown in the status bar and used by "tile ls"
 	sock     string
+	sockIno  uint64 // the socket's inode, which survives renames; panes carry it
 	ln       net.Listener
 	events   chan event
 	windows  []*window
@@ -151,11 +155,16 @@ func RunServer(name string) error {
 	if err != nil {
 		return err
 	}
+	sockIno, err := proto.SocketIno(sock)
+	if err != nil {
+		return err
+	}
 	cfg := loadConfig()
 	margin := max(cfg.Margin, 0)
 	s := &server{
 		name:       name,
 		sock:       sock,
+		sockIno:    sockIno,
 		ln:         ln,
 		events:     make(chan event, 256),
 		w:          80,
@@ -235,8 +244,9 @@ func (s *server) loop() {
 		case e := <-s.events:
 			s.handle(e)
 		case <-tick.C:
-			if s.dirty && s.cli != nil && s.h > 2 {
-				s.cli.send(s.frame())
+			// A dropped frame stays dirty, so the next tick resends the
+			// latest screen instead of leaving a burst's last frame unseen.
+			if s.dirty && s.cli != nil && s.h > 2 && s.cli.send(s.frame()) {
 				s.dirty = false
 			}
 		}
@@ -456,7 +466,7 @@ func (s *server) newWindow() error {
 	if h < 1 {
 		h = 1
 	}
-	p, err := newPane(s.nextID, s.w, h, s.events)
+	p, err := newPane(s.nextID, s.w, h, s.events, s.sockIno)
 	if err != nil {
 		return err
 	}

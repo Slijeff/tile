@@ -15,7 +15,7 @@ import (
 func floatServer(t *testing.T) (*server, *node) {
 	t.Helper()
 	events := make(chan event, 256)
-	p, err := newPane(0, 80, 24, events)
+	p, err := newPane(0, 80, 24, events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestFloatSwallowsClicksOutsideIt(t *testing.T) {
 	if right == nil {
 		t.Fatal("split should have room in an 80-wide body")
 	}
-	rp, err := newPane(9, 10, 10, s.events)
+	rp, err := newPane(9, 10, 10, s.events, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
