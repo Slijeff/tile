@@ -284,8 +284,9 @@ func (s *server) commandFormKey(k tea.Key) {
 // fieldRows renders one form field as one row per line of its value (more
 // than one only ever happens for the cmd field), labeled on the first line
 // and indented to match on any continuation, with the trailing cursor on
-// its last line while focused.
-func fieldRows(label, text string, focused bool, th theme) []string {
+// its last line while focused — kept in view, when the line is wider than
+// w, by cutting its start instead of its end.
+func fieldRows(label, text string, focused bool, w int, th theme) []string {
 	prefix := label + ": "
 	pad := strings.Repeat(" ", len(prefix))
 	lines := strings.Split(text, "\n")
@@ -296,7 +297,7 @@ func fieldRows(label, text string, focused bool, th theme) []string {
 			p = pad
 		}
 		if focused && i == len(lines)-1 {
-			line += "▏"
+			line = inputTail(line+"▏", w-len(p))
 		}
 		rows[i] = fg(th.Text) + p + line + "\x1b[m"
 	}
@@ -305,18 +306,19 @@ func fieldRows(label, text string, focused bool, th theme) []string {
 
 // commandFormBox renders the add/edit form as a bordered panel, one
 // labeled row per field (more for cmd, if it spans multiple lines), the
-// focused field carrying the trailing cursor.
-func commandFormBox(f *commandForm, th theme) []string {
+// focused field carrying the trailing cursor. w is the whole box's width,
+// set relative to the screen by the caller.
+func commandFormBox(f *commandForm, w int, th theme) []string {
 	labels := [3]string{"alias", "dir", "cmd"}
 	var rows []string
 	for i, label := range labels {
-		rows = append(rows, fieldRows(label, f.fields[i], i == f.focus, th)...)
+		rows = append(rows, fieldRows(label, f.fields[i], i == f.focus, w-4, th)...)
 	}
 	title := "add command  (tab/↑↓ move · enter save · opt+enter newline in cmd · esc cancel)"
 	if f.editing {
 		title = "edit command  (tab/↑↓ move · enter save · opt+enter newline in cmd · esc cancel)"
 	}
-	return panel(title, rows, 40, th)
+	return fixedPanel(title, rows, w, th)
 }
 
 // --- picker / manager ----------------------------------------------------
@@ -416,9 +418,10 @@ func oneLine(s string) string {
 // directory if it has one), the highlighted one picked out in the theme's
 // accent color — styled like presetListBox. Its title lists only the bound
 // keys, the same way presetListBox's title conditionally lists
-// DeletePreset.
-func commandListBox(cl *commandList, km keymap, th theme) []string {
-	rows := []string{fg(th.Text) + "search: " + cl.query + "▏\x1b[m"}
+// DeletePreset. w is the whole box's width, set relative to the screen by
+// the caller; rows too long for it are cut short with "…".
+func commandListBox(cl *commandList, km keymap, w int, th theme) []string {
+	rows := []string{fg(th.Text) + "search: " + inputTail(cl.query+"▏", w-4-len("search: ")) + "\x1b[m"}
 	switch {
 	case len(cl.all) == 0:
 		rows = append(rows, fg(th.Text)+"  no saved commands"+"\x1b[m")
@@ -448,5 +451,5 @@ func commandListBox(cl *commandList, km keymap, th theme) []string {
 		title += " · " + km.DeleteCommand + " delete"
 	}
 	title += " · esc cancel)"
-	return panel(title, rows, 0, th)
+	return fixedPanel(title, rows, w, th)
 }

@@ -113,6 +113,34 @@ func panel(title string, rows []string, minWidth int, th theme) []string {
 	return box
 }
 
+// fixedPanel is panel at exactly w cells wide, border included, for panels
+// sized relative to the screen rather than to their content: a title or row
+// too long for it is cut short with "…" inside the border.
+func fixedPanel(title string, rows []string, w int, th theme) []string {
+	inner := max(w-4, 1)
+	fit := func(s string) string {
+		if ansi.StringWidth(s) > inner {
+			return ansi.Truncate(s, inner, "…") + "\x1b[m"
+		}
+		return s
+	}
+	fitted := make([]string, len(rows))
+	for i, r := range rows {
+		fitted[i] = fit(r)
+	}
+	return panel(fit(title), fitted, inner, th)
+}
+
+// inputTail keeps the last w cells of a plain-text input line, cutting its
+// start with "…" instead of its end, so the cursor at the end of what's
+// being typed stays in view.
+func inputTail(s string, w int) string {
+	if sw := ansi.StringWidth(s); sw > w && w > 1 {
+		return "…" + ansi.TruncateLeft(s, sw-w+1, "")
+	}
+	return s
+}
+
 // padTo pads s out with spaces, or truncates it, to exactly w visible cells.
 // Rows have to measure the same or the box they sit in loses its shape.
 func padTo(s string, w int) string {

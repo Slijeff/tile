@@ -398,9 +398,9 @@ func (s *server) frame() proto.ServerMsg {
 	case s.presetList != nil:
 		body = overlayCenter(body, bd.w, bd.h, presetListBox(s.presetList, s.km, s.theme))
 	case s.commandForm != nil:
-		body = overlayCenter(body, bd.w, bd.h, commandFormBox(s.commandForm, s.theme))
+		body = overlayCenter(body, bd.w, bd.h, commandFormBox(s.commandForm, halfWidth(bd.w), s.theme))
 	case s.commandList != nil:
-		body = overlayCenter(body, bd.w, bd.h, commandListBox(s.commandList, s.km, s.theme))
+		body = overlayCenter(body, bd.w, bd.h, commandListBox(s.commandList, s.km, halfWidth(bd.w), s.theme))
 	case s.sessions != nil:
 		body = overlayCenter(body, bd.w, bd.h, sessionPickerBox(s.sessions, s.sessionName(), s.theme))
 	case s.swapMode:
@@ -538,4 +538,12 @@ func (s *server) shutdown() {
 		s.cli.send(proto.ServerMsg{Type: proto.MsgDetach})
 		time.Sleep(50 * time.Millisecond) // let the goodbye reach the client
 	}
+}
+
+// halfWidth is the width of a panel sized relative to the screen: half of
+// it, but at least 40 cells — the old add-command form's minimum, room for
+// a title's first hint and a short command — and never so wide that it
+// stops fitting strictly inside the w-cell screen overlayCenter needs.
+func halfWidth(w int) int {
+	return min(max(w/2, 40), w-2)
 }

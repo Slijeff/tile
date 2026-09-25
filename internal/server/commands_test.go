@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // saveCommand/loadCommands must round-trip through disk, and re-saving under
@@ -267,6 +268,46 @@ func TestRunSavedCommandSendsCdThenCommand(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatalf("shell never echoed the sent command, got %q", got)
+		}
+	}
+}
+
+// Regression: the picker used to size itself to its title and longest
+// command, so on a narrow screen it came out wider than the body and
+// overlayCenter dropped it — leaving an invisible picker still capturing
+// every key. It and the form now take a fixed width, cutting long rows
+// short inside an intact border, and the typed text keeps its cursor end
+// in view.
+func TestHalfWidth(t *testing.T) {
+	for w, want := range map[int]int{200: 100, 80: 40, 60: 40, 30: 28} {
+		if got := halfWidth(w); got != want {
+			t.Errorf("halfWidth(%d) = %d, want %d", w, got, want)
+		}
+	}
+}
+
+func TestCommandBoxesFitGivenWidth(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	cl := &commandList{all: []savedCommand{{Name: "long", Cmd: long}}, query: long}
+	cl.shown = cl.all
+	f := &commandForm{fields: [3]string{"a", "", long}, focus: fieldCmd}
+
+	const w = 40
+	for name, box := range map[string][]string{
+		"list": commandListBox(cl, keymap{NewCommand: "ctrl+n"}, w, theme{}),
+		"form": commandFormBox(f, w, theme{}),
+	} {
+		for i, l := range box {
+			plain := ansi.Strip(l)
+			if lw := ansi.StringWidth(plain); lw != w {
+				t.Fatalf("%s box[%d] width = %d, want %d: %q", name, i, lw, w, plain)
+			}
+			if !strings.HasSuffix(plain, "┐") && !strings.HasSuffix(plain, "│") && !strings.HasSuffix(plain, "┘") {
+				t.Fatalf("%s box[%d] lost its right border: %q", name, i, plain)
+			}
+		}
+		if !strings.Contains(strings.Join(box, "\n"), "x▏") {
+			t.Fatalf("%s box cut off the cursor end of the typed text", name)
 		}
 	}
 }

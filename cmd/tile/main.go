@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,6 +20,23 @@ import (
 	"tile/internal/proto"
 	"tile/internal/server"
 )
+
+// version is stamped in by goreleaser's -X main.version=... ldflag; blank
+// in any other build.
+var version string
+
+// tileVersion is the release version goreleaser stamped in, else the module
+// version Go records at build time (a tag, or a pseudo-version from git for
+// a local build), else "dev" when neither is known.
+func tileVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "dev"
+}
 
 func main() {
 	name, explicit, rest := splitSession(os.Args[1:])
@@ -48,6 +66,8 @@ func main() {
 		err = killServer(name, explicit)
 	case "ls", "list-sessions":
 		err = listSessions()
+	case "-v", "--version", "version":
+		fmt.Println("tile", tileVersion())
 	case "-h", "--help", "help":
 		_, err = os.Stdout.WriteString(usage) // not fmt.Print: %<id> reads as a verb
 	default:
@@ -97,6 +117,7 @@ const usage = `tile — terminal multiplexer
   tile [attach] [-t name]          attach to a session, starting it if needed
   tile kill-server [-t name]       stop a session, or every session (asks first)
   tile ls                          list running sessions
+  tile --version                   print tile's version
 
 "-t name" (any command) targets a session other than "default".
 

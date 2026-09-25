@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // theme is the palette tile's own chrome (tab bar, status bar, tooltip and
@@ -124,10 +125,23 @@ func pickerBox(names []string, sel int, th theme) []string {
 
 // overlayCenter stamps box onto the middle of a w-by-h grid, the same way
 // overlay pins one to the bottom-right corner but floating instead.
+// A box too big for the grid is clipped rather than dropped: every caller
+// is a modal that captures the keyboard while open, so an invisible one
+// would leave the user typing into a panel they can't see.
 func overlayCenter(base string, w, h int, box []string) string {
-	bw := boxWidth(box)
-	if len(box) == 0 || len(box) > h || bw >= w {
+	if len(box) == 0 || w < 2 || h < 1 {
 		return base
 	}
+	if len(box) > h {
+		box = box[:h]
+	}
+	if boxWidth(box) >= w {
+		clipped := make([]string, len(box))
+		for i, l := range box {
+			clipped[i] = ansi.Truncate(l, w-1, "") + "\x1b[m"
+		}
+		box = clipped
+	}
+	bw := boxWidth(box)
 	return overlayAt(base, w, (w-bw)/2, (h-len(box))/2, box)
 }
